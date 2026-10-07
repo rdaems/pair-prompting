@@ -1,0 +1,71 @@
+/* pair's doors (landing, join) — dressed like Super Atlas: its bitmap font
+   (pixel.woff2, 8 dots to the em, so font sizes are multiples of 8px), its
+   palette, its bevelled dithered panels (fills from pixel.js). One dot = 2 CSS px. */
+@font-face { font-family: "Pair Pixel"; src: url(/pixel.woff2) format("woff2"); font-display: block; }
+:root {
+  --ink:#140f1e; --ink2:#2a2140; --night:#0b0812;
+  --steel0:#3b3a55; --steel1:#5d6280; --steel2:#8b93ad; --steel3:#c2c9d9; --steel4:#f4f6fb; --white:#fff;
+  --scrub0:#10363f; --scrub1:#1b6660; --scrub2:#2fa087; --scrub3:#7fdcb0;
+  --gold0:#b86a1e; --gold1:#f2a531; --gold2:#ffe27a; --tissue2:#f06b72;
+  --pixel:"Pair Pixel", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing:border-box; }
+html { -webkit-text-size-adjust:100%; }
+body { margin:0; background:var(--night) var(--stars); color:var(--white); font:16px/22px var(--pixel);
+  -webkit-font-smoothing:none; -moz-osx-font-smoothing:grayscale; font-smooth:never; }
+button, input { font:inherit; color:inherit; }
+::selection { background:var(--gold2); color:var(--ink); }
+
+/* panel: an ink ring, two bevel rings, a dithered fill, clipped corners */
+.pn { border:2px solid var(--ink); clip-path:polygon(2px 0,calc(100% - 2px) 0,100% 2px,100% calc(100% - 2px),calc(100% - 2px) 100%,2px 100%,0 calc(100% - 2px),0 2px); }
+.pn.window { background:var(--f-window); padding:10px 14px; text-shadow:2px 2px 0 var(--ink);
+  box-shadow: inset 2px 2px 0 var(--steel4), inset -2px -2px 0 var(--steel2), inset 4px 4px 0 var(--steel3), inset -4px -4px 0 var(--steel1), inset 0 0 0 6px var(--ink); }
+
+/* buttons: steel, gold when hovered, pressed in when held */
+.btn { cursor:pointer; padding:5px 12px; color:var(--ink); background:var(--f-button); border:2px solid var(--ink); text-shadow:none;
+  clip-path:polygon(2px 0,calc(100% - 2px) 0,100% 2px,100% calc(100% - 2px),calc(100% - 2px) 100%,2px 100%,0 calc(100% - 2px),0 2px);
+  box-shadow: inset 2px 2px 0 var(--white), inset -2px -2px 0 var(--steel1); }
+.btn:hover, .btn:focus-visible { background:var(--f-hot); box-shadow: inset 2px 2px 0 var(--white), inset -2px -2px 0 var(--gold0); outline:none; }
+.btn:active { background:var(--steel2); box-shadow: inset 2px 2px 0 var(--steel1), inset -2px -2px 0 var(--white); padding:7px 11px 3px 13px; }
+.btn.go { background:var(--f-green); color:var(--white); text-shadow:2px 2px 0 var(--ink); box-shadow: inset 2px 2px 0 var(--scrub3), inset -2px -2px 0 var(--scrub0); }
+.btn.go:hover, .btn.go:focus-visible { background:var(--scrub2); box-shadow: inset 2px 2px 0 var(--white), inset -2px -2px 0 var(--scrub1); }
+.btn.go:active { background:var(--scrub1); box-shadow: inset 2px 2px 0 var(--scrub0), inset -2px -2px 0 var(--scrub3); }
+.btn.small { padding:1px 8px; }
+.btn.small:active { padding:3px 7px 0 9px; }
+
+/* fields, like Super Atlas's name box */
+.field { width:100%; padding:6px 8px; border:2px solid var(--ink); border-radius:0; background:var(--steel4); color:var(--ink);
+  box-shadow: inset 2px 2px 0 var(--steel2); outline:none; text-shadow:none; }
+.field:focus { box-shadow: inset 2px 2px 0 var(--steel2), 0 0 0 2px var(--gold1); }
+
+/* the big gold title lettering: top-lit gradient, ink outline, ink2 drop shadow */
+.big { display:inline-block; color:transparent; font-size:64px; line-height:64px;
+  background:linear-gradient(var(--white) 0 8px, var(--gold2) 8px 24px, var(--gold1) 24px 40px, var(--gold0) 40px);
+  -webkit-background-clip:text; background-clip:text;
+  filter: drop-shadow(4px 0 0 var(--ink)) drop-shadow(-4px 0 0 var(--ink)) drop-shadow(0 4px 0 var(--ink)) drop-shadow(0 -4px 0 var(--ink)) drop-shadow(4px 4px 0 var(--ink2)); }
+
+.door { min-height:100vh; display:grid; place-items:center; padding:24px 16px; }
+.door main { width:100%; max-width:480px; }
+.door h1 { margin:0 0 6px; text-align:center; }
+.door .tag { text-align:center; margin:0 0 22px; color:var(--gold2); }
+.door label { display:block; margin:14px 0 6px; color:var(--gold2); }
+.door p { margin:0 0 10px; }
+.door .row { display:flex; justify-content:flex-end; margin-top:18px; }
+.door a { color:var(--gold2); }
+.legend { display:flex; justify-content:center; gap:18px; margin:0 0 22px; flex-wrap:wrap; }
+.err { color:var(--tissue2); min-height:22px; margin-top:8px; }
+
+/* the face picker: one portrait between ← and → */
+.faces { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.face { padding:2px; background:var(--ink); border:2px solid var(--ink); box-shadow: inset 2px 2px 0 var(--steel1); line-height:0; }
+.face img { width:64px; height:64px; image-rendering:pixelated; display:block; }
+
+/* the rooms this browser is in, under the form */
+.mine { margin-top:16px; }
+.mine label { margin-top:0; }
+.mine ul { list-style:none; margin:0; padding:0; }
+.mine li { padding:3px 0; }
+.mine li a { color:var(--white); }
+.mine li a:hover { color:var(--gold2); }
+.mine .as { color:var(--steel3); }

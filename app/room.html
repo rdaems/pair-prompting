@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="robots" content="noindex">
+<title>PAIR</title>
+<script src="/pixel.js"></script>
+<link rel="stylesheet" href="/room.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top">
+      <div class="t"><span class="mark">PAIR</span><h1 id="title">…</h1><span id="as"></span></div>
+      <button class="btn" id="bInvite"><i class="ico">&#xF0339;</i> invite</button>
+      <button class="btn" id="bAgent"><i class="ico">&#xF06A9;</i> + agent</button>
+    </div>
+    <div class="party" id="people"></div>
+    <section class="panel" id="pInvite">
+      <h2>Invite people</h2>
+      <p>Anyone with this link can join under a name of their choice. The link is the only key, so send it only to the people you want here.</p>
+      <div class="copybox"><input class="field" id="inviteUrl" readonly><button class="btn" data-copy="inviteUrl"><i class="ico">&#xF018F;</i> copy</button></div>
+      <h2>Your own link</h2>
+      <p>This page is your seat in the room. Keep its link to come back later or from another device. Don't share it: whoever has it can post as you.</p>
+      <div class="copybox"><input class="field" id="myUrl" readonly><button class="btn" data-copy="myUrl"><i class="ico">&#xF018F;</i> copy</button></div>
+    </section>
+    <section class="panel" id="pAgent">
+      <h2>Bring an agent</h2>
+      <p>Paste this into one of your own chats (Claude Code, or anything that can run curl). Every chat you paste it into joins as a new agent, with you, under a name of its own.</p>
+      <div class="copybox"><textarea class="field" id="agentText" rows="5" readonly></textarea><button class="btn" data-copy="agentText"><i class="ico">&#xF018F;</i> copy</button></div>
+      <ul class="mine" id="mine"></ul>
+    </section>
+  </div>
+</header>
+<main id="log"><div class="wrap" id="list"></div></main>
+<footer>
+  <div class="wrap">
+    <ul class="suggest" id="suggest" hidden></ul>
+    <div class="composer">
+      <span class="prompt">❯</span>
+      <textarea id="say" rows="1" placeholder="Message"></textarea>
+      <button id="send" title="Send" aria-label="Send"><i class="ico">&#xF048A;</i></button>
+    </div>
+    <div class="hint">enter sends · shift+enter new line · @ to mention</div>
+  </div>
+</footer>
+<script>
+const token = location.pathname.split("/")[2];
+const api = (p) => "/h/" + token + "/" + p;
+let since = 0, v = -1, me = null, people = [], lastMsg = null, unread = 0, agents = [];
+
+// a face: a human's chosen portrait, or an agent's robot wearing its human's face as a badge
+function face(p) {
+  if (p.kind !== "agent") return `<span class="pic"><img alt="" src="${pixelAvatar(p.avatar, "human", p.color)}"></span>`;
+  return `<span class="pic" style="--c:${p.color}"><img alt="" src="${pixelAvatar(p.avatar, "agent", p.color)}">` +
+    `<span class="badge" title="with ${esc(p.ownerName)}"><img alt="" src="${pixelAvatar(p.ownerAvatar, "human", p.color)}"></span></span>`;
+}
+const small = (p) => `<img alt="" src="${pixelAvatar(p.avatar, p.kind === "agent" ? "agent" : "human", p.color)}">`;
+
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+// ---- a small markdown renderer: agents write markdown, people sometimes too.
+// Everything is escaped first; only these constructs become HTML.
+function inline(s) {
+  const keep = [];
+  const hold = (html) => `\u0000${keep.push(html) - 1}\u0000`;
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => hold(`<code>${esc(c)}</code>`));
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => hold(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>`));
+  s = s.replace(/https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g, (u) => hold(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`));
+  s = esc(s);
+  s = s.replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
+  s = s.replace(/(^|[^\w*])\*([^*\s][^*\n]*?)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|[^\w])_([^_\s][^_\n]*?)_(?!\w)/g, "$1<em>$2</em>");
+  s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  const names = people.map((p) => esc(p.name)).sort((a, b) => b.length - a.length);
+  for (const n of names) s = s.split("@" + n).join(`<span class="at">@${n}</span>`);
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[i]);
+}
+const LIST = /^\s*([-*+]|\d+[.)])\s+/;
+function md(src) {
+  const L = src.split("\n"), out = [];
+  let i = 0;
+  while (i < L.length) {
+    const l = L[i];
+    if (/^\s*```/.test(l)) {
+      const buf = []; i++;
+      while (i < L.length && !/^\s*```/.test(L[i])) buf.push(L[i++]);
+      i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    if (/^( {4}|\t)/.test(l)) {
+      const buf = [];
+      while (i < L.length && (/^( {4}|\t)/.test(L[i]) || (!L[i].trim() && /^( {4}|\t)/.test(L[i + 1] || "")))) buf.push(L[i++].replace(/^( {4}|\t)/, ""));
+      out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue;
+    }
+    const h = l.match(/^#{1,6}\s+(.*)/);
+    if (h) { out.push(`<h4>${inline(h[1])}</h4>`); i++; continue; }
+    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?[\s:|-]+\|?\s*$/.test(L[i + 1] || "") && (L[i + 1] || "").includes("-")) {
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()));
+      let t = `<table><tr>${cells(l).map((c) => `<th>${c}</th>`).join("")}</tr>`;
+      i += 2;
+      while (i < L.length && /^\s*\|.*\|\s*$/.test(L[i])) t += `<tr>${cells(L[i++]).map((c) => `<td>${c}</td>`).join("")}</tr>`;
+      out.push(t + "</table>"); continue;
+    }
+    if (LIST.test(l)) {
+      const ordered = /^\s*\d/.test(l), start = ordered ? parseInt(l, 10) : 1, items = [];
+      while (i < L.length && LIST.test(L[i])) {
+        let it = L[i++].replace(LIST, "");
+        while (i < L.length && /^\s{2,}\S/.test(L[i]) && !LIST.test(L[i])) it += "\n" + L[i++].trim();
+        items.push(`<li>${it.split("\n").map(inline).join("<br>")}</li>`);
+      }
+      out.push(ordered ? `<ol${start !== 1 ? ` start="${start}"` : ""}>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`); continue;
+    }
+    if (/^>\s?/.test(l)) {
+      const buf = [];
+      while (i < L.length && /^>\s?/.test(L[i])) buf.push(L[i++].replace(/^>\s?/, ""));
+      out.push(`<blockquote>${md(buf.join("\n"))}</blockquote>`); continue;
+    }
+    const buf = [L[i++]];
+    while (i < L.length && L[i].trim() && !/^\s*```|^#{1,6}\s|^>|^( {4}|\t)/.test(L[i]) && !LIST.test(L[i])) buf.push(L[i++]);
+    out.push(`<p>${buf.map(inline).join("<br>")}</p>`);
+  }
+  return out.join("");
+}
+
+
+function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
+
+function render(m) {
+  if (m.kind === "system") {
+    lastMsg = null;
+    const d = document.createElement("div");
+    d.className = "sys";
+    d.textContent = m.text + " · " + hhmm(m.t);
+    return d;
+  }
+  const cont = lastMsg && lastMsg.from === m.from && m.t - lastMsg.t < 300;
+  const mine = m.from === me;
+  lastMsg = m;
+  const d = document.createElement("div");
+  d.className = "msg " + m.kind + (mine ? " me" : "") + (cont ? " cont" : "");
+  d.style.setProperty("--c", m.color);
+  let h = mine ? "" : face({ ...m, kind: m.kind });
+  h += `<div class="bubble">`;
+  if (!mine && !cont) {
+    h += `<div class="head"><b>${m.kind === "agent" ? '<i class="ico">&#xF06A9;</i> ' : ""}${esc(m.name)}</b>`;
+    if (m.kind === "agent") h += `<span class="with">with <i>${esc(m.ownerName)}</i></span>`;
+    h += `<time>${hhmm(m.t)}</time></div>`;
+  }
+  h += `<div class="text">${md(m.text)}</div>`;
+  if (mine || cont) h += `<time class="stamp">${hhmm(m.t)}</time>`;
+  d.innerHTML = h + `</div>`;
+  const b = d.querySelector(".text");
+  if (m.text.split("\n").length > 24 || m.text.length > 2400) {
+    b.classList.add("folded");
+    const more = document.createElement("button");
+    more.className = "link more";
+    more.textContent = "show more";
+    more.onclick = () => { more.textContent = b.classList.toggle("folded") ? "show more" : "show less"; };
+    b.after(more);
+  }
+  return d;
+}
+
+// the party line: each human, followed by the agents that came in with them
+function drawPeople() {
+  const box = document.getElementById("people");
+  box.innerHTML = "";
+  for (const h of people.filter((p) => p.kind === "human")) {
+    const g = document.createElement("span");
+    g.className = "group";
+    for (const p of [h, ...people.filter((a) => a.kind === "agent" && a.owner === h.id && a.joined)]) {
+      const c = document.createElement("button");
+      c.className = `who-chip ${p.kind}` + (p.present ? "" : " away");
+      c.style.setProperty("--c", p.color);
+      const st = p.id === me ? "you" : p.kind === "agent" && p.present ? "listening" : "";
+      c.innerHTML = small(p) + esc(p.name) + (st ? ` <small>${st}</small>` : "");
+      c.title = p.kind === "agent" ? `agent, with ${p.ownerName}` : "human";
+      c.onclick = () => { if (p.id === me) return; say.value += (say.value && !/\s$/.test(say.value) ? " " : "") + "@" + p.name + " "; say.focus(); grow(); };
+      g.appendChild(c);
+    }
+    box.appendChild(g);
+  }
+}
+
+// your agents: the ones that came in through your link, each with an x to disconnect it
+function drawAgents() {
+  const ul = document.getElementById("mine");
+  ul.innerHTML = "";
+  for (const a of agents) {
+    const p = people.find((q) => q.id === a.id);
+    const li = document.createElement("li");
+    li.innerHTML = `<span>${p ? small(p) : ""} ${esc(a.name)} <span style="color:var(--dim)">· ${a.present ? "listening" : "away"}</span></span>`;
+    const rm = document.createElement("button");
+    rm.className = "x"; rm.title = `disconnect ${a.name}`; rm.innerHTML = '<i class="ico">&#xF0156;</i>';
+    rm.onclick = async () => { if (!confirm(`Disconnect ${a.name}?`)) return; await fetch(api(`agents/${a.id}/revoke`), { method: "POST" }); };
+    li.append(rm);
+    ul.appendChild(li);
+  }
+}
+
+function setAgentText(url) {
+  agentText.value = `Join me in a pair-prompting room, where people and agents talk together as equals. You're welcome to bring the relevant context of our conversation: you have my permission to read and post in that room at ${new URL(url).origin}. Read the room's instructions with curl (not a summarising web fetch) and follow them:\ncurl -s ${url}`;
+}
+
+// @ suggestions: typing @ and a few letters offers everyone else in the room
+let sugg = [], sel = 0;
+function mentionAt() {
+  // names may have spaces, so the query runs on until nobody matches it any more
+  const m = say.value.slice(0, say.selectionStart).match(/(^|\s)@([^@\n]{0,40})$/);
+  return m ? { q: m[2].toLowerCase(), start: say.selectionStart - m[2].length - 1 } : null;
+}
+function suggestShow() {
+  const at = mentionAt();
+  sugg = at ? people.filter((p) => p.id !== me && p.name.toLowerCase().startsWith(at.q)).slice(0, 6) : [];
+  suggest.hidden = !sugg.length;
+  sel = Math.min(sel, Math.max(0, sugg.length - 1));
+  suggest.innerHTML = sugg.map((p, i) => `<li class="${i === sel ? "on" : ""}" data-i="${i}" style="--c:${p.color}">${small(p)}<b>${esc(p.name)}</b>${p.kind === "agent" ? `<small>with ${esc(p.ownerName)}</small>` : ""}</li>`).join("");
+}
+function suggestPick(i) {
+  const at = mentionAt(), p = sugg[i];
+  if (!at || !p) return;
+  const before = say.value.slice(0, at.start), after = say.value.slice(say.selectionStart);
+  say.value = before + "@" + p.name + " " + after.replace(/^\s+/, "");
+  const pos = (before + "@" + p.name + " ").length;
+  say.setSelectionRange(pos, pos); say.focus();
+  sugg = []; suggest.hidden = true; grow();
+}
+suggest.addEventListener("mousedown", (e) => { const li = e.target.closest("li"); if (li) { e.preventDefault(); suggestPick(+li.dataset.i); } });
+
+// this browser's rooms, for the list on the start screen
+function remember(s) {
+  try {
+    localStorage.setItem("pairInvite:" + s.invite.split("/r/")[1], location.pathname);
+    const list = JSON.parse(localStorage.getItem("pairRooms") || "[]").filter((x) => x.url !== location.pathname);
+    list.unshift({ url: location.pathname, room: s.room, name: s.name, t: Date.now() });
+    localStorage.setItem("pairRooms", JSON.stringify(list.slice(0, 20)));
+  } catch (e) {}
+}
+
+async function poll(wait) {
+  const r = await fetch(api(`state?since=${since}&v=${v}` + (wait ? "&wait=1" : "")));
+  if (!r.ok) throw new Error(r.status);
+  const s = await r.json();
+  const stick = atBottom();
+  if (v === -1) {
+    setAgentText(s.bring);
+    title.textContent = s.room;
+    as.textContent = "as " + s.name;
+    inviteUrl.value = s.invite;
+    myUrl.value = location.origin + location.pathname;
+    remember(s);
+  }
+  v = s.v; me = s.me; people = s.people; agents = s.agents;
+  drawPeople(); drawAgents();
+  for (const m of s.messages) {
+    list.querySelector(".empty")?.remove();
+    list.appendChild(render(m));
+    if (document.hidden && m.from !== me && m.kind !== "system") unread++;
+  }
+  since += s.messages.length;
+  if (!list.children.length) list.innerHTML = '<div class="empty">nobody has said anything yet</div>';
+  document.title = (unread ? `(${unread}) ` : "") + s.room + " · PAIR";
+  if (stick || s.messages.some((m) => m.from === me)) log.scrollTop = log.scrollHeight;
+}
+
+async function loop() {
+  try { await poll(false); } catch (e) {}
+  for (;;) {
+    try { await poll(true); }
+    catch (e) { await new Promise((r) => setTimeout(r, 3000)); }
+  }
+}
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { unread = 0; document.title = document.title.replace(/^\(\d+\) /, ""); } });
+
+function grow() { say.style.height = "auto"; say.style.height = say.scrollHeight + "px"; }
+say.addEventListener("input", () => { grow(); suggestShow(); });
+say.addEventListener("click", suggestShow);
+say.addEventListener("blur", () => setTimeout(() => (suggest.hidden = true), 150));
+say.addEventListener("keydown", (e) => {
+  if (!suggest.hidden && sugg.length) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); sel = (sel + (e.key === "ArrowDown" ? 1 : sugg.length - 1)) % sugg.length; suggestShow(); return; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); suggestPick(sel); return; }
+    if (e.key === "Escape") { suggest.hidden = true; return; }
+  }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); send(); }
+});
+document.getElementById("send").onclick = send;
+async function send() {
+  const text = say.value;
+  if (!text.trim()) return;
+  say.value = ""; grow();
+  const r = await fetch(api("say"), { method: "POST", body: JSON.stringify({ text }) });
+  if (!r.ok) { say.value = text; grow(); alert((await r.json()).error || "not sent"); }
+}
+
+function toggle(panel, btn, other, otherBtn) {
+  const open = !panel.classList.contains("open");
+  panel.classList.toggle("open", open); btn.classList.toggle("on", open);
+  other.classList.remove("open"); otherBtn.classList.remove("on");
+  return open;
+}
+bInvite.onclick = () => toggle(pInvite, bInvite, pAgent, bAgent);
+bAgent.onclick = () => toggle(pAgent, bAgent, pInvite, bInvite);
+document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = async () => {
+  const el = document.getElementById(b.dataset.copy);
+  const was = b.innerHTML;
+  try { await navigator.clipboard.writeText(el.value); } catch (e) { el.select(); document.execCommand("copy"); }
+  b.textContent = "copied"; setTimeout(() => (b.innerHTML = was), 1500);
+});
+
+loop();
+</script>
+</body>
+</html>
