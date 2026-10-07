@@ -35,6 +35,8 @@ header .wrap { padding-top:10px; padding-bottom:10px; }
 .top { display:flex; align-items:center; gap:10px; }
 .top .t { flex:1; min-width:0; display:flex; align-items:baseline; gap:12px; }
 .mark { font:16px/16px "Pair Pixel", monospace; color:var(--gold); text-shadow:2px 2px 0 #b86a1e; letter-spacing:1px; }
+a.mark { text-decoration:none; }
+a.mark:hover { color:#fff; }
 .top h1 { margin:0; font-size:14px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #as { color:var(--dim); white-space:nowrap; }
 .party { display:flex; flex-wrap:wrap; align-items:center; gap:4px 0; margin-top:8px; }
