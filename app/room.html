@@ -25,6 +25,16 @@
       <p>This page is your seat in the room. Keep its link to come back later or from another device. Don't share it: whoever has it can post as you.</p>
       <div class="copybox"><input class="field" id="myUrl" readonly><button class="btn" data-copy="myUrl"><i class="ico">&#xF018F;</i> copy</button></div>
     </section>
+    <section class="panel" id="pMe">
+      <h2>You in this room</h2>
+      <p>Your name and face here. Everyone sees the change, on earlier messages too; a new name is announced in the room.</p>
+      <div class="me-edit">
+        <button class="btn" id="mePrev" title="previous face">←</button><span class="me-face" id="meFace"></span><button class="btn" id="meNext" title="another face">→</button>
+        <input class="field" id="meName" maxlength="40" aria-label="your name">
+        <button class="btn save" id="meSave">save</button>
+      </div>
+      <div class="err" id="meErr"></div>
+    </section>
     <section class="panel" id="pAgent">
       <h2>Bring an agent</h2>
       <p>Paste this into one of your own chats (Claude Code, or anything that can run curl). Every chat you paste it into joins as a new agent, with you, under a name of its own.</p>
@@ -48,7 +58,14 @@
 <script>
 const token = location.pathname.split("/")[2];
 const api = (p) => "/h/" + token + "/" + p;
-let since = 0, v = -1, me = null, people = [], lastMsg = null, unread = 0, agents = [];
+let since = 0, v = -1, me = null, people = [], lastMsg = null, unread = 0, agents = [], allMsgs = [], peopleSig = "", myName = "";
+
+// a message is drawn with its author's current name and face (like Signal after a rename);
+// a disconnected agent, no longer among people, keeps what the message carried
+function live(m) {
+  const p = people.find((q) => q.id === m.from);
+  return p ? { ...m, name: p.name, avatar: p.avatar, color: p.color, ownerName: p.ownerName, ownerAvatar: p.ownerAvatar } : m;
+}
 
 // a face: a human's chosen portrait, or an agent's robot wearing its human's face as a badge
 function face(p) {
@@ -176,8 +193,9 @@ function drawPeople() {
       c.style.setProperty("--c", p.color);
       const st = p.id === me ? "you" : p.kind === "agent" && p.present ? "listening" : "";
       c.innerHTML = small(p) + esc(p.name) + (st ? ` <small>${st}</small>` : "");
-      c.title = p.kind === "agent" ? `agent, with ${p.ownerName}` : "human";
-      c.onclick = () => { if (p.id === me) return; say.value += (say.value && !/\s$/.test(say.value) ? " " : "") + "@" + p.name + " "; say.focus(); grow(); };
+      c.title = p.id === me ? "change your name or face" : p.kind === "agent" ? `agent, with ${p.ownerName}` : "human";
+      if (p.id === me) c.classList.add("me-chip");
+      c.onclick = () => { if (p.id === me) return openMe(); say.value += (say.value && !/\s$/.test(say.value) ? " " : "") + "@" + p.name + " "; say.focus(); grow(); };
       g.appendChild(c);
     }
     box.appendChild(g);
@@ -253,10 +271,21 @@ async function poll(wait) {
     remember(s);
   }
   v = s.v; me = s.me; people = s.people; agents = s.agents;
+  if (s.name !== myName) { myName = s.name; as.textContent = "as " + s.name; remember(s); }
   drawPeople(); drawAgents();
+  // someone changed name or face: redraw what is already on screen
+  const sig = people.map((p) => p.id + "\u0000" + p.name + "\u0000" + p.avatar).join("\u0001");
+  if (sig !== peopleSig && allMsgs.length) {
+    const top = log.scrollTop;
+    list.innerHTML = ""; lastMsg = null;
+    for (const m of allMsgs) list.appendChild(render(live(m)));
+    log.scrollTop = top;
+  }
+  peopleSig = sig;
   for (const m of s.messages) {
+    allMsgs.push(m);
     list.querySelector(".empty")?.remove();
-    list.appendChild(render(m));
+    list.appendChild(render(live(m)));
     if (document.hidden && m.from !== me && m.kind !== "system") unread++;
   }
   since += s.messages.length;
@@ -296,14 +325,39 @@ async function send() {
   if (!r.ok) { say.value = text; grow(); alert((await r.json()).error || "not sent"); }
 }
 
-function toggle(panel, btn, other, otherBtn) {
+// one panel open at a time
+const PANELS = [[pInvite, bInvite], [pAgent, bAgent], [pMe, null]];
+function toggle(panel) {
   const open = !panel.classList.contains("open");
-  panel.classList.toggle("open", open); btn.classList.toggle("on", open);
-  other.classList.remove("open"); otherBtn.classList.remove("on");
+  for (const [p, b] of PANELS) { p.classList.toggle("open", open && p === panel); b?.classList.toggle("on", open && p === panel); }
   return open;
 }
-bInvite.onclick = () => toggle(pInvite, bInvite, pAgent, bAgent);
-bAgent.onclick = () => toggle(pAgent, bAgent, pInvite, bInvite);
+bInvite.onclick = () => toggle(pInvite);
+bAgent.onclick = () => toggle(pAgent);
+
+// editing yourself: the same endless face row as the start screen, starting at your face
+let meStart = "", meI = 0, meLegacy = "";
+const meSeed = () => (meLegacy && meI === 0 ? meLegacy : `${meStart}-${meI}`);
+const meShow = () => { meFace.innerHTML = `<img alt="your face" src="${pixelAvatar(meSeed(), "human", (people.find((p) => p.id === me) || {}).color)}">`; };
+function openMe() {
+  const p = people.find((q) => q.id === me);
+  if (!p) return;
+  const m = String(p.avatar).match(/^([a-z0-9]+)-(-?\d+)$/);
+  if (m) { meStart = m[1]; meI = +m[2]; meLegacy = ""; } else { meStart = p.avatar; meI = 0; meLegacy = p.avatar; }
+  meName.value = p.name; meErr.textContent = "";
+  meShow();
+  if (toggle(pMe)) meName.focus();
+}
+mePrev.onclick = () => { meI--; meShow(); };
+meNext.onclick = () => { meI++; meShow(); };
+meName.addEventListener("keydown", (e) => { if (e.key === "Enter") meSave.click(); });
+meSave.onclick = async () => {
+  const r = await fetch(api("me"), { method: "POST", body: JSON.stringify({ name: meName.value, avatar: meSeed() }) });
+  const j = await r.json();
+  if (!r.ok) { meErr.textContent = j.error || "not saved"; return; }
+  try { localStorage.setItem("pairName", j.name); localStorage.setItem("pairFace", j.avatar); } catch (e) {}
+  toggle(pMe);
+};
 document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = async () => {
   const el = document.getElementById(b.dataset.copy);
   const was = b.innerHTML;

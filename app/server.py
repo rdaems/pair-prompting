@@ -420,6 +420,8 @@ class Handler(BaseHTTPRequestHandler):
                 if rest == ["say"]:
                     text = str(self.json_body().get("text") or "")
                     return self.say(room, me, "human", text, json_reply=True)
+                if rest == ["me"]:
+                    return self.edit_me(room, me)
                 if len(rest) == 3 and rest[0] == "agents" and rest[2] == "revoke":
                     return self.revoke_agent(room, me, rest[1])
             if kind == "a" and hit and hit[0] == "agent" and rest == ["say"]:
@@ -511,6 +513,27 @@ class Handler(BaseHTTPRequestHandler):
         if not p.get("joined"):
             p["joined"] = round(now())
             self.announce(room, p)
+
+    def edit_me(self, room, me):
+        """a human changes their name and/or face in this room; a new name is announced"""
+        b = self.json_body()
+        with lock:
+            p = room.person(me)
+            old = p["name"]
+            name = clean_name(b.get("name")) if "name" in b else old
+            if not name:
+                return self.send(400, {"error": "a name is needed"})
+            if name != old and room.unique(name, me) != name:
+                return self.send(409, {"error": f"{name} is already here, pick another name"})
+            if "avatar" in b:
+                p["avatar"] = clean_avatar(b.get("avatar"))
+            p["name"] = name
+            room.save()
+            if name != old:
+                room.post(None, "system", f"{old} is now called {name}")
+            else:
+                room.changed()
+        return self.send(200, {"name": name, "avatar": p["avatar"]})
 
     def revoke_agent(self, room, me, aid):
         with lock:

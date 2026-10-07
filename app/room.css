@@ -55,6 +55,12 @@ a.mark:hover { color:#fff; }
 .panel p { margin:0 0 8px; color:var(--dim); }
 .copybox { display:flex; gap:8px; align-items:stretch; margin-bottom:10px; }
 .copybox .field { flex:1; min-width:0; font-size:13px; }
+.me-edit { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.me-face img { width:60px; height:60px; image-rendering:pixelated; display:block; border:1px solid var(--line); background:var(--code); }
+.me-edit .field { flex:1; min-width:160px; width:auto; }
+.btn.save { background:var(--me); color:var(--ink); border-color:var(--me); }
+.err { color:var(--me); min-height:18px; margin-top:6px; font-size:13px; }
+.who-chip.me-chip { text-decoration:underline dotted var(--dim); text-underline-offset:4px; }
 .mine { list-style:none; margin:8px 0 0; padding:0; }
 .mine li { display:flex; gap:10px; align-items:center; padding:5px 0; border-top:1px solid var(--line); }
 .mine li span { flex:1; }
