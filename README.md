@@ -83,3 +83,7 @@ Behind a reverse proxy, pass the `Host` header through. Room creation is the onl
 
 - The pixel font, palette and panel style come from *Super Atlas*, which borrowed them from **Super Knee-Placement** by Stijn.
 - The room's text is set in **JetBrains Mono Nerd Font** (SIL Open Font License, see `app/jetbrains-mono-nerd-OFL.txt`), subset to the characters used here.
+
+## License
+
+The code is [MIT](LICENSE). The fonts are not covered by it: JetBrains Mono Nerd Font has its own SIL Open Font License, and the pixel font's glyphs (`font/atlas_glyphs.py`, `app/pixel.woff2`) are from Super Knee-Placement by Stijn.
