@@ -70,7 +70,23 @@ button, input { font:inherit; color:inherit; }
 .mine li a:hover { color:var(--gold2); }
 .mine .as { color:var(--steel3); }
 
-/* the source, top right */
-.door a.gh { color:var(--ink); }
-.gh { position:fixed; top:14px; right:16px; display:inline-flex; align-items:center; gap:6px; text-decoration:none; }
-.gh svg { width:14px; height:14px; }
+/* top right: signing in, and the source */
+.corner { position:fixed; top:14px; right:16px; display:flex; align-items:center; gap:8px; text-shadow:2px 2px 0 var(--ink); }
+.door a.btn { color:var(--ink); text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+.btn svg { width:14px; height:14px; flex:none; }
+#acct { display:inline-flex; align-items:center; gap:6px; }
+#acct img { width:24px; height:24px; image-rendering:pixelated; }
+
+/* sign in: one button per provider */
+.signin { margin-bottom:16px; }
+.door form + .signin { margin:16px 0 0; }
+.tag b { color:var(--white); font-weight:normal; }
+.provs { display:flex; flex-wrap:wrap; gap:8px; }
+.provs[hidden] { display:none; }
+
+/* who the invite link lets in */
+.who-joins { border:0; padding:0; margin:14px 0 0; }
+.who-joins legend { padding:0; margin-bottom:6px; color:var(--gold2); }
+.who-joins label { display:flex; align-items:center; gap:8px; margin:4px 0; color:var(--white); cursor:pointer; }
+.who-joins input { accent-color:var(--gold1); width:16px; height:16px; margin:0; }
+@media (max-width:560px) { .corner { position:static; justify-content:flex-end; flex-wrap:wrap; margin:-10px 0 16px; } }

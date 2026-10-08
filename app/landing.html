@@ -7,14 +7,19 @@
 <title>PAIR</title>
 <script src="/pixel.js"></script>
 <script src="/faces.js"></script>
+<script src="/auth.js"></script>
 <link rel="stylesheet" href="/door.css">
 </head>
 <body class="door">
-<a class="btn small gh" href="https://github.com/rdaems/pair-prompting" target="_blank" rel="noopener" title="pair on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GITHUB</a>
+<div class="corner"><span id="acct" hidden></span><button type="button" class="btn small" id="bSignin" hidden>SIGN IN</button><a class="btn small gh" href="https://github.com/rdaems/pair-prompting" target="_blank" rel="noopener" title="pair on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GITHUB</a></div>
 <main>
   <h1><span class="big">PAIR</span></h1>
   <p class="tag">pair prompting</p>
   <div class="legend"><span><span style="color:var(--tissue2)">♥</span> humans talk</span><span><span style="color:var(--scrub3)">◆</span> their agents join in</span></div>
+  <section class="pn window signin" id="pSignin" hidden>
+    <p>Sign in and your rooms are on every device you use. Or don't: this browser remembers your rooms, and a room's link is all anyone needs.</p>
+    <div class="provs" id="provs"></div>
+  </section>
   <form id="f" class="pn window">
     <p>Open a room. You get an invite link for people and agent links for your own chats.</p>
     <label for="room">Room</label>
@@ -23,6 +28,11 @@
     <input class="field" id="who" required maxlength="40" autocomplete="nickname">
     <label>Your face</label>
     <div class="faces"><button type="button" class="btn small" id="prevFace" title="previous face" aria-label="previous face">←</button><span class="face" id="faces"></span><button type="button" class="btn small" id="nextFace" title="another face" aria-label="another face">→</button></div>
+    <fieldset class="who-joins" id="whoJoins" hidden>
+      <legend>Who can join</legend>
+      <label><input type="radio" name="signin" value="" checked> anyone with the invite link</label>
+      <label><input type="radio" name="signin" value="1"> people with the link who sign in</label>
+    </fieldset>
     <div class="row"><button class="btn go">OPEN ROOM →</button></div>
     <div class="err" id="err"></div>
   </form>
@@ -32,21 +42,46 @@
   </section>
 </main>
 <script>
-const face = facePicker(faces, prevFace, nextFace);
-// the rooms this browser is in, newest first, so a closed tab is one click away
-try {
-  const list = JSON.parse(localStorage.getItem("pairRooms") || "[]");
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  if (list.length) {
-    mine.hidden = false;
-    mineList.innerHTML = list.map((x) => `<li><a href="${esc(x.url)}">${esc(x.room)}</a> <span class="as">as ${esc(x.name)}</span></li>`).join("");
-  }
-} catch (e) {}
+let face = facePicker(faces, prevFace, nextFace);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let local = [];
+try { local = JSON.parse(localStorage.getItem("pairRooms") || "[]"); } catch (e) {}
+// your rooms, newest first, so a closed tab is one click away: the account's on
+// every device, plus whatever this browser holds that isn't in it
+function drawRooms(server) {
+  const seen = new Set(server.map((x) => x.url));
+  const list = [...server, ...local.filter((x) => !seen.has(x.url))];
+  mine.hidden = !list.length;
+  mineList.innerHTML = list.map((x) => `<li><a href="${esc(x.url)}">${esc(x.room)}</a> <span class="as">as ${esc(x.name)}</span></li>`).join("");
+}
+drawRooms([]);
 try { who.value = localStorage.getItem("pairName") || ""; } catch (e) {}
+bSignin.onclick = () => { pSignin.hidden = !pSignin.hidden; };
+(async () => {
+  let me = await (await fetch("/api/me")).json();
+  if (me.account && local.length) {
+    // just signed in: the rooms this browser already sat in join the account
+    const r = await fetch("/api/me/claim", { method: "POST", body: JSON.stringify({ seats: local.map((x) => x.url) }) });
+    if ((await r.json()).claimed) me = await (await fetch("/api/me")).json();
+  }
+  const a = me.account;
+  whoJoins.hidden = !me.providers.length;
+  if (a) {
+    acct.hidden = false;
+    acct.innerHTML = `${a.avatar ? `<img alt="" src="${pixelAvatar(a.avatar, "human", "#8b93ad")}">` : ""}<span title="signed in with ${esc(a.via)}">${esc(a.name || a.via)}</span> <button type="button" class="btn small" onclick="signOut()">SIGN OUT</button>`;
+    if (a.name) who.value = a.name;
+    if (a.avatar) { try { localStorage.setItem("pairFace", a.avatar); } catch (e) {} face = facePicker(faces, prevFace, nextFace); }
+  } else if (me.providers.length) {
+    bSignin.hidden = false;
+    providerButtons(provs, me.providers, "/", "btn small");
+  }
+  drawRooms(me.rooms);
+})();
 f.onsubmit = async (e) => {
   e.preventDefault();
   try { localStorage.setItem("pairName", who.value.trim()); } catch (e) {}
-  const r = await fetch("/api/rooms", { method: "POST", body: JSON.stringify({ room: room.value, name: who.value, avatar: face() }) });
+  const signin = !!f.querySelector("input[name=signin]:checked").value;
+  const r = await fetch("/api/rooms", { method: "POST", body: JSON.stringify({ room: room.value, name: who.value, avatar: face(), signin }) });
   const j = await r.json();
   if (!r.ok) { err.textContent = j.error || "failed"; return; }
   location.href = j.url;

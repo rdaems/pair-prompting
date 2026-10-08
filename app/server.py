@@ -9,11 +9,16 @@ A room is created from the landing page and is nothing but its links:
 Every link is a secrets.token_urlsafe(24) and the role comes from which kind of
 token it is, never from the request.
 
+Signing in (auth.py) is optional and sits beside the links: an account remembers
+the seats its person holds, so their rooms follow them to every device, and a room
+can ask the people who join by its link to sign in first.
+
 State: data/rooms/<id>/room.json (name, people, tokens) + messages.jsonl
 (append-only), all loaded into memory at start.
 """
 import json
 import os
+import http.cookies
 import re
 import secrets
 import threading
@@ -21,11 +26,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import auth
+
 DATA = os.environ.get("PAIR_DATA", "/data")
 APP = os.path.dirname(os.path.abspath(__file__))
 MAX_TEXT = 200_000            # one message; agents paste context
 MAX_BODY = 1_000_000
-STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "faces.js": "text/javascript",
+STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
           "pixel.woff2": "font/woff2", "mono.woff2": "font/woff2", "mono-bold.woff2": "font/woff2",
           "jetbrains-mono-nerd-OFL.txt": "text/plain"}
 COLORS = ["#ffe27a", "#8fc0e8", "#ffb0a8", "#7fdcb0", "#9a74d6", "#f7c59a", "#f2a531", "#5fcf4a"]  # Super Atlas palette, light tones for a dark room
@@ -56,6 +63,8 @@ NEW_PER_HOUR = 20           # cap it, per client address and in total
 lock = threading.Lock()
 created = {}                  # client address -> recent creation times
 rooms = {}                    # room id -> Room
+accounts = None               # auth.Accounts, loaded at start
+logins = {}                   # sign-in state -> (provider, where to go after, time)
 tokens = {}                   # token -> (kind, room, participant id or None)
 
 
@@ -129,10 +138,17 @@ class Room:
     def face(self, p):
         """what the page needs to draw someone: name, colour, avatar, and for an agent its human"""
         q = {"id": p["id"], "kind": p["kind"], "name": self.label(p), "color": p["color"], "avatar": p.get("avatar") or p["id"]}
+        if p.get("account") and p["account"] in accounts.accounts:
+            q["via"] = auth.LABEL[accounts.accounts[p["account"]]["provider"]]
         if p["kind"] == "agent":
             o = self.person(p["owner"])
             q.update(owner=o["id"], ownerName=o["name"], ownerAvatar=o.get("avatar") or o["id"])
         return q
+
+    def seat_of(self, account):
+        """the seat a signed-in person already holds here, if any"""
+        return next((p for p in self.meta["people"] if account and p["kind"] == "human"
+                     and p.get("account") == account["id"] and not p.get("revoked")), None)
 
     def public_msg(self, m):
         p = self.person(m["from"]) if m["from"] else None
@@ -206,6 +222,20 @@ def clean_avatar(s):
 def clean_name(s, limit=40):
     return re.sub(r"\s+", " ", str(s or "")).strip()[:limit]
 
+
+
+def seats(account):
+    """every room an account sits in, newest activity first"""
+    out = []
+    for room in rooms.values():
+        p = room.seat_of(account)
+        if p:
+            last = room.messages[-1]["t"] if room.messages else room.meta["created"]
+            out.append({"url": f"/h/{p['token']}", "room": room.meta["name"], "name": p["name"], "t": last})
+    return sorted(out, key=lambda x: -x["t"])
+
+
+SAFE_NEXT = re.compile(r"^/([rh]/[A-Za-z0-9_-]+)?$")
 
 
 def ftime(t):
@@ -343,6 +373,37 @@ class Handler(BaseHTTPRequestHandler):
     def text(self, code, s):
         self.send(code, s, "text/plain")
 
+    def redirect(self, where, cookies=()):
+        self.send_response(303)
+        self.send_header("Location", where)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        for c in cookies:
+            self.send_header("Set-Cookie", c)
+        self.end_headers()
+
+    def cookie(self, name):
+        try:
+            c = http.cookies.SimpleCookie(self.headers.get("Cookie") or "")
+        except http.cookies.CookieError:
+            return None
+        return c[name].value if name in c else None
+
+    def secure(self):
+        return self.base().startswith("https:")
+
+    def set_cookie(self, name, value, age, path="/", cross_site=False):
+        # the sign-in state has to survive Apple posting back from its own site
+        same = "None" if cross_site and self.secure() else "Lax"
+        return f"{name}={value}; Path={path}; Max-Age={age}; HttpOnly; SameSite={same}" + ("; Secure" if self.secure() else "")
+
+    def account(self):
+        return accounts.by_session(self.cookie("pair_sid"))
+
+    def me_info(self):
+        a = self.account()
+        return {"name": a["name"], "avatar": a.get("avatar") or "", "via": auth.LABEL[a["provider"]]} if a else None
+
     def page(self, name):
         with open(os.path.join(APP, name), "rb") as f:
             self.send(200, f.read(), "text/html")
@@ -377,12 +438,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, f.read(), STATIC[parts[0]], {"Cache-Control": "max-age=300"})
         if parts == ["favicon.ico"]:
             return self.send(204, b"", "text/plain")
+        if parts == ["api", "me"]:
+            a = self.account()
+            with lock:
+                mine = seats(a) if a else []
+            return self.send(200, {"account": self.me_info(), "providers": self.providers(), "rooms": mine})
+        if parts[0] == "auth" and len(parts) in (2, 3):
+            return self.auth_route(parts[1:], q, {})
         if len(parts) < 2:
             return self.text(404, "not found\n")
         kind, t, rest = parts[0], parts[1], parts[2:]
         hit = tokens.get(t)
         if kind == "r" and hit and hit[0] == "invite" and not rest:
-            return self.page("join.html")
+            seat = hit[1].seat_of(self.account())
+            return self.redirect(f"/h/{seat['token']}") if seat else self.page("join.html")
+        if kind == "r" and hit and hit[0] == "invite" and rest == ["info"]:
+            room = hit[1]
+            return self.send(200, {"room": room.meta["name"], "signin": bool(room.meta.get("signin")),
+                                   "providers": self.providers(), "account": self.me_info()})
         if kind == "h" and hit and hit[0] == "human":
             if not rest:
                 return self.page("room.html")
@@ -409,6 +482,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parts == ["api", "rooms"]:
                 return self.create_room()
+            if parts == ["api", "me", "claim"]:
+                return self.claim()
+            if parts == ["auth", "logout"]:
+                sid = self.cookie("pair_sid")
+                if sid:
+                    with lock:
+                        accounts.logout(sid)
+                return self.send(200, {"ok": True}, extra={"Set-Cookie": self.set_cookie("pair_sid", "", 0)})
+            if parts[:1] == ["auth"] and len(parts) == 3:
+                form = {k: v[-1] for k, v in parse_qs(self.body().decode("utf-8", "replace")).items()}
+                return self.auth_route(parts[1:], form, form)
             if len(parts) < 2:
                 return self.send(404, {"error": "not found"})
             kind, t, rest = parts[0], parts[1], parts[2:]
@@ -422,6 +506,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.say(room, me, "human", text, json_reply=True)
                 if rest == ["me"]:
                     return self.edit_me(room, me)
+                if rest == ["sharing"]:
+                    return self.sharing(room, me)
                 if len(rest) == 3 and rest[0] == "agents" and rest[2] == "revoke":
                     return self.revoke_agent(room, me, rest[1])
             if kind == "a" and hit and hit[0] == "agent" and rest == ["say"]:
@@ -438,6 +524,7 @@ class Handler(BaseHTTPRequestHandler):
     def create_room(self):
         b = self.json_body()
         name, who = clean_name(b.get("room"), 80), clean_name(b.get("name"))
+        account = self.account()
         if not name or not who:
             return self.send(400, {"error": "room name and your name are needed"})
         ip = self.headers.get("Cf-Connecting-Ip") or (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0]
@@ -447,24 +534,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(429, {"error": "too many rooms, try again later"})
             created[ip] = recent + [now()]
             rid = secrets.token_hex(6)
-            meta = {"id": rid, "name": name, "created": round(now()), "invite": tok(), "people": []}
+            meta = {"id": rid, "name": name, "created": round(now()), "invite": tok(), "people": [], "signin": bool(b.get("signin"))}
             room = Room(meta, [])
             os.makedirs(room.dir, exist_ok=True)
             open(os.path.join(room.dir, "messages.jsonl"), "a").close()
             index(room)
-            p = add_person(room, "human", name=who, avatar=clean_avatar(b.get("avatar")), joined=round(now()))
+            p = add_person(room, "human", name=who, avatar=clean_avatar(b.get("avatar")), joined=round(now()),
+                           **({"account": account["id"]} if account else {}))
+            self.remember(account, p)
             room.post(None, "system", f"{who} opened the room")
         return self.send(200, {"url": f"/h/{p['token']}"})
 
     def join(self, room):
         b = self.json_body()
         who = clean_name(b.get("name"))
+        account = self.account()
+        if room.meta.get("signin") and not account:
+            return self.send(401, {"error": "this room asks you to sign in first", "signin": True})
         if not who:
             return self.send(400, {"error": "a name is needed"})
         with lock:
+            seat = room.seat_of(account)
+            if seat:
+                return self.send(200, {"url": f"/h/{seat['token']}"})
             if room.unique(who) != who:
                 return self.send(409, {"error": f"{who} is already here, pick another name"})
-            p = add_person(room, "human", name=who, avatar=clean_avatar(b.get("avatar")), joined=round(now()))
+            p = add_person(room, "human", name=who, avatar=clean_avatar(b.get("avatar")), joined=round(now()),
+                           **({"account": account["id"]} if account else {}))
+            self.remember(account, p)
             room.post(None, "system", f"{who} joined")
         return self.send(200, {"url": f"/h/{p['token']}"})
 
@@ -494,8 +591,108 @@ class Handler(BaseHTTPRequestHandler):
                            if p["kind"] == "agent" and p["owner"] == me and p.get("joined") and not p.get("revoked")],
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
+                "signin": bool(room.meta.get("signin")),
+                "providers": self.providers(),
+                "account": ({"name": acc["name"], "via": auth.LABEL[acc["provider"]]}
+                            if (acc := accounts.accounts.get(mine.get("account") or "")) else None),
             }
         return self.send(200, state)
+
+    def remember(self, account, p):
+        """a signed-in person's name and face become their defaults for the next room"""
+        if account:
+            account["name"], account["avatar"] = p["name"], p.get("avatar") or ""
+            accounts.save()
+
+    def sharing(self, room, me):
+        """anyone in the room may change who its link lets in, or replace the link; announced"""
+        b = self.json_body()
+        with lock:
+            who = room.person(me)["name"]
+            if "signin" in b and bool(b["signin"]) != bool(room.meta.get("signin")):
+                room.meta["signin"] = bool(b["signin"])
+                room.save()
+                room.post(None, "system", f"{who} set the invite link to {'sign-in only' if room.meta['signin'] else 'anyone with it'}")
+            if b.get("new_link"):
+                tokens.pop(room.meta["invite"], None)
+                room.meta["invite"] = tok()
+                tokens[room.meta["invite"]] = ("invite", room, None)
+                room.save()
+                room.post(None, "system", f"{who} replaced the invite link")
+        return self.send(200, {"ok": True})
+
+    def claim(self):
+        """after signing in: the seats this browser already held become the account's"""
+        a = self.account()
+        if not a:
+            return self.send(401, {"error": "not signed in"})
+        n = 0
+        with lock:
+            for url in (self.json_body().get("seats") or [])[:200]:
+                hit = tokens.get(str(url).rsplit("/", 1)[-1])
+                if hit and hit[0] == "human":
+                    n += self.claim_seat(a, hit[1], hit[2])
+        return self.send(200, {"claimed": n})
+
+    def claim_seat(self, a, room, pid):
+        p = room.person(pid)
+        if p.get("account") or room.seat_of(a):
+            return 0          # someone's already, or this account has its own seat here
+        p["account"] = a["id"]
+        room.save()
+        if not a.get("avatar"):        # the face you already wear becomes the account's
+            a["avatar"] = p.get("avatar") or ""
+            accounts.save()
+        room.changed()
+        return 1
+
+    def providers(self):
+        return [{"id": p, "name": auth.LABEL[p]} for p in auth.config(DATA)]
+
+    def auth_route(self, rest, q, form):
+        """/auth/<provider>?next=… sends you off; /auth/<provider>/callback brings you back"""
+        p, conf = rest[0], auth.config(DATA)
+        if p not in conf:
+            return self.text(404, "no such sign-in\n")
+        c, redirect = conf[p], f"{self.base()}/auth/{p}/callback"
+        if len(rest) == 1:
+            nxt = q.get("next") or "/"
+            state = secrets.token_urlsafe(24)
+            with lock:
+                for k in [k for k, v in logins.items() if now() - v[2] > 600]:
+                    del logins[k]
+                logins[state] = (p, nxt if SAFE_NEXT.match(nxt) else "/", now())
+            return self.redirect(auth.authorize_url(p, c, redirect, state),
+                                 [self.set_cookie("pair_state", state, 600, "/auth", cross_site=True)])
+        if rest[1] != "callback":
+            return self.text(404, "not found\n")
+        state = q.get("state") or ""
+        with lock:
+            pending = logins.pop(state, None)
+        if not pending or pending[0] != p or state != self.cookie("pair_state") or now() - pending[2] > 600:
+            return self.failed("/", "the sign-in took too long or started in another browser. Please try again.")
+        nxt = pending[1]
+        if not q.get("code"):
+            return self.redirect(nxt)      # they said no at the provider: back where they were
+        try:
+            sub, name = auth.identify(p, c, q["code"], redirect, form)
+        except (auth.LoginError, KeyError, ValueError, OSError) as e:
+            print(f"sign-in with {p} failed: {e}", flush=True)
+            return self.failed(nxt, f"{auth.LABEL[p]} didn't let us in this time. Please try again.")
+        with lock:
+            a = accounts.find_or_create(p, sub, clean_name(name))
+            hit = tokens.get(nxt.rsplit("/", 1)[-1]) if nxt.startswith("/h/") else None
+            if hit and hit[0] == "human":
+                self.claim_seat(a, hit[1], hit[2])   # signed in from a room: that seat comes along
+            sid = accounts.login(a["id"])
+        return self.redirect(nxt, [self.set_cookie("pair_sid", sid, auth.SESSION_DAYS * 86400),
+                                   self.set_cookie("pair_state", "", 0, "/auth", cross_site=True)])
+
+    def failed(self, back, why):
+        self.send(400, f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+                       f'<title>PAIR</title><link rel="stylesheet" href="/door.css"><body class="door"><main><h1><span class="big">PAIR</span></h1>'
+                       f'<div class="pn window"><p>Signing in didn\'t work: {why}</p><div class="row"><a class="btn" href="{back}">BACK</a></div></div></main>',
+                  "text/html")
 
     def agent_new(self, room, owner):
         """someone fetched a human's agent link: a new agent, which appears once it connects"""
@@ -649,6 +846,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     load()
+    accounts = auth.Accounts(DATA)
     port = int(os.environ.get("PORT", 8000))
     srv = ThreadingHTTPServer(("", port), Handler)
     srv.daemon_threads = True

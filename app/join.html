@@ -7,13 +7,19 @@
 <title>PAIR · join</title>
 <script src="/pixel.js"></script>
 <script src="/faces.js"></script>
+<script src="/auth.js"></script>
 <link rel="stylesheet" href="/door.css">
 </head>
 <body class="door">
 <main>
   <h1><span class="big">PAIR</span></h1>
-  <p class="tag">you are invited into a room</p>
-  <form id="f" class="pn window">
+  <p class="tag" id="tag">you are invited into a room</p>
+  <section class="pn window" id="gate" hidden>
+    <p>This room asks people to sign in before they join, so everyone knows who is who.</p>
+    <div class="provs" id="gateProvs"></div>
+  </section>
+  <form id="f" class="pn window" hidden>
+    <p id="acct" hidden></p>
     <p id="back" hidden style="color:var(--gold2)">This browser is already in this room: <a id="backlink">go back in</a>, or join again under another name.</p>
     <label for="who">Your name</label>
     <input class="field" id="who" required maxlength="40" autofocus autocomplete="nickname">
@@ -22,10 +28,36 @@
     <div class="row"><button class="btn go">JOIN →</button></div>
     <div class="err" id="err"></div>
   </form>
+  <section class="pn window signin" id="offer" hidden>
+    <p>Or sign in first, and the room will be on every device you use.</p>
+    <div class="provs" id="offerProvs"></div>
+  </section>
 </main>
 <script>
-const face = facePicker(faces, prevFace, nextFace);
+let face = facePicker(faces, prevFace, nextFace);
 const invite = location.pathname.split("/")[2];
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+(async () => {
+  const i = await (await fetch(location.pathname + "/info")).json();
+  tag.innerHTML = `you are invited into <b>${esc(i.room)}</b>`;
+  document.title = i.room + " · PAIR";
+  const a = i.account;
+  if (i.signin && !a) {
+    gate.hidden = false;
+    providerButtons(gateProvs, i.providers, location.pathname, "btn small");
+    return;
+  }
+  f.hidden = false;
+  if (a) {
+    acct.hidden = false;
+    acct.innerHTML = `Signed in with ${esc(a.via)}. <a href="#" onclick="signOut(); return false">Sign out</a>`;
+    if (a.name) who.value = a.name;
+    if (a.avatar) { try { localStorage.setItem("pairFace", a.avatar); } catch (e) {} face = facePicker(faces, prevFace, nextFace); }
+  } else if (i.providers.length) {
+    offer.hidden = false;
+    providerButtons(offerProvs, i.providers, location.pathname, "btn small");
+  }
+})();
 let known = null;
 try {
   who.value = localStorage.getItem("pairName") || "";

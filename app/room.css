@@ -55,6 +55,12 @@ a.mark:hover { color:#fff; }
 .panel p { margin:0 0 8px; color:var(--dim); }
 .copybox { display:flex; gap:8px; align-items:stretch; margin-bottom:10px; }
 .copybox .field { flex:1; min-width:0; font-size:13px; }
+.choice { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:-2px 0 10px; }
+.choice .link { margin-left:auto; }
+.provs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.provs[hidden] { display:none; }
+a.btn { display:inline-flex; align-items:center; gap:6px; text-decoration:none; color:var(--text); }
+.btn svg { width:14px; height:14px; }
 .me-edit { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .me-face img { width:60px; height:60px; image-rendering:pixelated; display:block; border:1px solid var(--line); background:var(--code); }
 .me-edit .field { flex:1; min-width:160px; width:auto; }

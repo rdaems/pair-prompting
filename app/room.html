@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex">
 <title>PAIR</title>
 <script src="/pixel.js"></script>
+<script src="/auth.js"></script>
 <link rel="stylesheet" href="/room.css">
 </head>
 <body>
@@ -19,10 +20,16 @@
     <div class="party" id="people"></div>
     <section class="panel" id="pInvite">
       <h2>Invite people</h2>
-      <p>Anyone with this link can join under a name of their choice. The link is the only key, so send it only to the people you want here.</p>
+      <p id="inviteWho"></p>
       <div class="copybox"><input class="field" id="inviteUrl" readonly><button class="btn" data-copy="inviteUrl"><i class="ico">&#xF018F;</i> copy</button></div>
-      <h2>Your own link</h2>
-      <p>This page is your seat in the room. Keep its link to come back later or from another device. Don't share it: whoever has it can post as you.</p>
+      <div class="choice" id="share" hidden>
+        <button class="btn" data-signin="">anyone with the link</button><button class="btn" data-signin="1">only if they sign in</button>
+        <button class="link" id="newLink">new link</button>
+      </div>
+      <h2>Your other devices</h2>
+      <p id="acctLine" hidden></p>
+      <div class="provs" id="provs" hidden></div>
+      <p id="myLine">This page is your seat in the room. Keep its link to come back later or from another device. Don't share it: whoever has it can post as you.</p>
       <div class="copybox"><input class="field" id="myUrl" readonly><button class="btn" data-copy="myUrl"><i class="ico">&#xF018F;</i> copy</button></div>
     </section>
     <section class="panel" id="pMe">
@@ -286,11 +293,11 @@ async function poll(wait) {
     setAgentText(s.bring);
     title.textContent = s.room;
     as.textContent = "as " + s.name;
-    inviteUrl.value = s.invite;
     myUrl.value = location.origin + location.pathname;
     remember(s);
   }
   v = s.v; me = s.me; people = s.people; agents = s.agents;
+  drawSharing(s);
   if (s.name !== myName) { myName = s.name; as.textContent = "as " + s.name; remember(s); }
   drawPeople(); drawAgents();
   // someone changed name or face: redraw what is already on screen
@@ -344,6 +351,37 @@ async function send() {
   const r = await fetch(api("say"), { method: "POST", body: JSON.stringify({ text }) });
   if (!r.ok) { say.value = text; grow(); alert((await r.json()).error || "not sent"); }
 }
+
+// how the room is shared, and whether this seat belongs to an account
+let sharingSig = "";
+function drawSharing(s) {
+  const sig = JSON.stringify([s.invite, s.signin, s.account, s.providers]);
+  if (sig === sharingSig) return;
+  sharingSig = sig;
+  inviteUrl.value = s.invite;
+  inviteWho.textContent = s.signin
+    ? "Whoever has this link can join after signing in with " + s.providers.map((p) => p.name).join(", ").replace(/, ([^,]*)$/, " or $1") + "."
+    : "Anyone with this link can join under a name of their choice. The link is the only key, so send it only to the people you want here.";
+  share.hidden = !s.providers.length;
+  share.querySelectorAll("[data-signin]").forEach((b) => b.classList.toggle("on", !!b.dataset.signin === s.signin));
+  const a = s.account;
+  acctLine.hidden = false;
+  if (a) {
+    acctLine.textContent = `Signed in with ${a.via}: this room is in your rooms on every device where you sign in.`;
+    provs.hidden = true;
+    myLine.textContent = "This page's own link works too, without signing in. Don't share it: whoever has it can post as you.";
+  } else if (s.providers.length) {
+    acctLine.textContent = "Sign in, and this room is in your rooms on every device you use:";
+    providerButtons(provs, s.providers, location.pathname, "btn");
+    myLine.textContent = "Or keep this page's link: it is your seat in the room. Don't share it: whoever has it can post as you.";
+  } else acctLine.hidden = true;
+}
+share.querySelectorAll("[data-signin]").forEach((b) => b.onclick = () =>
+  fetch(api("sharing"), { method: "POST", body: JSON.stringify({ signin: !!b.dataset.signin }) }));
+newLink.onclick = async () => {
+  if (!confirm("Make a new invite link? The old one stops working; people already here stay.")) return;
+  await fetch(api("sharing"), { method: "POST", body: JSON.stringify({ new_link: true }) });
+};
 
 // one panel open at a time
 const PANELS = [[pInvite, bInvite], [pAgent, bAgent], [pMe, null]];
