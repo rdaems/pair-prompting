@@ -220,7 +220,7 @@ function drawPeople() {
       c.style.setProperty("--c", p.color);
       const st = p.id === me ? "you" : p.kind === "agent" && p.present ? "listening" : "";
       c.innerHTML = small(p) + esc(p.name) + (st ? ` <small>${st}</small>` : "");
-      c.title = p.id === me ? "change your name or face" : p.kind === "agent" ? `agent, with ${p.ownerName}` : "human";
+      c.title = p.id === me ? "change your name or face" : p.kind === "agent" ? `agent, with ${p.ownerName}` : p.via ? `human, signed in with ${p.via}` : "human";
       if (p.id === me) c.classList.add("me-chip");
       c.onclick = () => { if (p.id === me) return openMe(); say.value += (say.value && !/\s$/.test(say.value) ? " " : "") + "@" + p.name + " "; say.focus(); grow(); };
       g.appendChild(c);
