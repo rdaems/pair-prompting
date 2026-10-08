@@ -149,6 +149,21 @@ function md(src) {
 
 function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
 
+// Whether the conversation sits at its newest message, as of the last scroll: a
+// shrinking view (a phone's keyboard opening, the prompt box growing) must keep it
+// there, and after the shrink atBottom() can no longer tell.
+let stuck = true;
+log.addEventListener("scroll", () => { stuck = atBottom(); });
+const pin = () => { if (stuck) log.scrollTop = log.scrollHeight; };
+new ResizeObserver(pin).observe(log);
+// A phone's keyboard covers the page instead of shrinking it (iOS always, Android
+// mostly): fit the page to the part still visible and undo the browser's own shove.
+if (window.visualViewport) {
+  const fit = () => { document.body.style.height = visualViewport.height + "px"; window.scrollTo(0, 0); pin(); };
+  visualViewport.addEventListener("resize", fit);
+  visualViewport.addEventListener("scroll", fit);
+}
+
 function render(m) {
   if (m.kind === "system") {
     lastMsg = null;
@@ -266,7 +281,7 @@ async function poll(wait) {
   const r = await fetch(api(`state?since=${since}&v=${v}` + (wait ? "&wait=1" : "")));
   if (!r.ok) throw new Error(r.status);
   const s = await r.json();
-  const stick = atBottom();
+  const stick = stuck;
   if (v === -1) {
     setAgentText(s.bring);
     title.textContent = s.room;
