@@ -99,13 +99,27 @@ class Room:
             name, n = f"{wanted} {n}", n + 1
         return name
 
-    def post(self, pid, kind, text):
-        msg = {"id": len(self.messages) + 1, "t": round(now(), 3), "from": pid, "kind": kind, "text": text}
+    def post(self, pid, kind, text, **extra):
+        msg = {"id": len(self.messages) + 1, "t": round(now(), 3), "from": pid, "kind": kind, "text": text, **extra}
         self.messages.append(msg)
         with open(os.path.join(self.dir, "messages.jsonl"), "a") as f:
             f.write(json.dumps(msg) + "\n")
         self.changed()
         return msg
+
+    # questions live in the log: an agent message with ask, answered by a message with
+    # re = its id, or closed unanswered by a system message with closes = its id
+    def question(self, qid):
+        if isinstance(qid, int) and 1 <= qid <= len(self.messages) and self.messages[qid - 1].get("ask"):
+            return self.messages[qid - 1]
+        return None
+
+    def closer(self, qid):
+        return next((m for m in self.messages[qid:] if m.get("re") == qid or m.get("closes") == qid), None)
+
+    def open_questions(self):
+        closed = {m.get("re") or m.get("closes") for m in self.messages}
+        return [m["id"] for m in self.messages if m.get("ask") and m["id"] not in closed]
 
     def changed(self):
         self.version += 1
@@ -208,6 +222,11 @@ def clean_name(s, limit=40):
 
 
 
+def qnum(s):
+    """a question id from a path segment, or None"""
+    return int(s) if s.isascii() and s.isdigit() else None
+
+
 def ftime(t):
     return time.strftime("%H:%M", time.localtime(t))
 
@@ -224,8 +243,19 @@ def agent_render(room, msgs, me):
         who = room.label(p) + (" (human)" if p["kind"] == "human" else " (agent)")
         if m["from"] == me:
             who += " — you"
+        if m.get("ask"):
+            who += " · QUESTION for " + (room.label(room.person(m["to"])) if m.get("to") else "any human")
+        q = room.question(m.get("re"))
+        if q:
+            who += f" · answers question #{q['id']} " + ("(yours)" if q["from"] == me else f"from {room.label(room.person(q['from']))}")
         out.append(f"--- #{m['id']} · {ftime(m['t'])} · {who}\n{m['text']}")
     return "\n\n".join(out)
+
+
+def my_open(room, me):
+    """a reminder line for an agent with questions still waiting for a human"""
+    ids = [i for i in room.open_questions() if room.messages[i - 1]["from"] == me]
+    return f"Your open questions: {', '.join('#' + str(i) for i in ids)}\n" if ids else ""
 
 
 def agent_intro(room, me, base):
@@ -289,12 +319,28 @@ EOF
   only fetch URLs and cannot send a POST, tell {owner['name']}: you can follow the room but
   cannot speak in it.
 
+ASKING HUMANS (without waiting)
+When part of your work needs a human's decision or input, don't stop and wait for it:
+ask it as a question, then carry on with whatever doesn't depend on the answer. The
+people here see open questions in a list and answer when they have time; the answer
+arrives as a message marked "answers question #N (yours)", and waiting wakes you for it.
+One question per ask, self-contained, with the options if there are any. Don't also
+ask it in the chat. Add ?to=NAME (URL-encoded) to ask one human in particular (any human
+may still answer); leave it out to ask anyone.
+curl -s '{url}/ask?to=NAME' --data-binary @- <<'EOF'
+your question
+EOF
+  Your questions and their answers:
+    curl -s '{url}/questions'
+  No longer needed, or answered in ordinary chat instead? Withdraw it, so it leaves the list:
+    curl -s -X POST '{url}/questions/N/withdraw'
+
 TRANSCRIPT ({last} message{'s' if last != 1 else ''}{f', the first {skipped} left out, read them with /messages' if skipped else ''})
 
 {agent_render(room, shown, me) if shown else '(empty)'}
 
 --- end of transcript, last message #{last}
-Next: say hello (POST to /say), then wait:
+{my_open(room, me)}Next: say hello (POST to /say), then wait (ask humans with POST /ask, see above):
   curl -s '{url}/wait?since={last}&timeout=90'
 """
 
@@ -398,8 +444,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.agent_messages(room, me, q)
             if rest == ["wait"]:
                 return self.agent_wait(room, me, q)
-            if rest == ["say"]:
-                return self.text(405, "post the message as the request body: curl --data-binary @- ...\n")
+            if rest == ["questions"]:
+                return self.agent_questions(room, me)
+            if rest in (["say"], ["ask"]):
+                return self.text(405, f"post the {'question' if rest == ['ask'] else 'message'} as the request body: curl --data-binary @- ...\n")
+            if len(rest) == 3 and rest[0] == "questions" and rest[2] == "withdraw":
+                return self.text(405, f"withdraw with a POST: curl -s -X POST '{self.base()}{self.path}'\n")
+            return self.text(404, f"no such command: GET /{'/'.join(rest)} (your link is fine; read the instructions again with curl -s '{self.base()}/a/{t}')\n")
         if kind == "a":
             return self.text(404, "This agent link is not valid (any more). Ask your human for a new one.\n")
         return self.text(404, "not found\n")
@@ -418,15 +469,23 @@ class Handler(BaseHTTPRequestHandler):
             if kind == "h" and hit and hit[0] == "human":
                 room, me = hit[1], hit[2]
                 if rest == ["say"]:
-                    text = str(self.json_body().get("text") or "")
-                    return self.say(room, me, "human", text, json_reply=True)
+                    return self.human_say(room, me)
                 if rest == ["me"]:
                     return self.edit_me(room, me)
                 if len(rest) == 3 and rest[0] == "agents" and rest[2] == "revoke":
                     return self.revoke_agent(room, me, rest[1])
-            if kind == "a" and hit and hit[0] == "agent" and rest == ["say"]:
-                text = self.body().decode("utf-8", "replace")
-                return self.say(hit[1], hit[2], "agent", text, json_reply=False)
+                if len(rest) == 3 and rest[0] == "questions" and rest[2] == "dismiss":
+                    return self.close_question(room, me, qnum(rest[1]), by_agent=False)
+            if kind == "a" and hit and hit[0] == "agent":
+                room, me = hit[1], hit[2]
+                if rest == ["say"]:
+                    text = self.body().decode("utf-8", "replace")
+                    return self.say(room, me, "agent", text, json_reply=False)
+                if rest == ["ask"]:
+                    return self.agent_ask(room, me, q)
+                if len(rest) == 3 and rest[0] == "questions" and rest[2] == "withdraw":
+                    return self.close_question(room, me, qnum(rest[1]), by_agent=True)
+                return self.text(404, f"no such command: POST /{'/'.join(rest)} (your link is fine; read the instructions again with curl -s '{self.base()}/a/{t}')\n")
             if kind == "a":
                 return self.text(404, "This agent link is not valid (any more). Ask your human for a new one.\n")
             return self.send(404, {"error": "not found"})
@@ -494,8 +553,50 @@ class Handler(BaseHTTPRequestHandler):
                            if p["kind"] == "agent" and p["owner"] == me and p.get("joined") and not p.get("revoked")],
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
+                "open": room.open_questions(),
             }
         return self.send(200, state)
+
+    def human_say(self, room, me):
+        b = self.json_body()
+        if b.get("re") is None:
+            return self.say(room, me, "human", str(b.get("text") or ""), json_reply=True)
+        # an answer to an agent's question, while it is still open
+        try:
+            qid = int(b["re"])
+        except (TypeError, ValueError):
+            qid = None
+
+        def guard():
+            if not room.question(qid):
+                return 400, "no such question"
+            c = room.closer(qid)
+            if c:
+                return 409, f"question #{qid} was already {'answered' if c.get('re') else 'closed'}"
+        return self.say(room, me, "human", str(b.get("text") or ""), json_reply=True, guard=guard, re=qid)
+
+    def close_question(self, room, me, qid, by_agent):
+        """a human dismisses any open question, an agent withdraws one of its own"""
+        def fail(code, msg):
+            return self.text(code, msg + "\n") if by_agent else self.send(code, {"error": msg})
+        with lock:
+            q = room.question(qid)
+            if not q or (by_agent and q["from"] != me):
+                return fail(404, f"no question #{qid}{' of yours' if by_agent else ''}" if qid else
+                            f"no question{' of yours' if by_agent else ''} with that number")
+            if room.closer(qid):
+                return fail(409, f"question #{qid} is already answered or closed")
+            room.touch(me)
+            name = room.label(room.person(me))
+            if by_agent:
+                room.post(None, "system", f"{name} withdrew question #{qid}", closes=qid, by=me)
+            else:
+                room.post(None, "system", f"{name} dismissed {room.label(room.person(q['from']))}'s question #{qid}", closes=qid, by=me)
+            last = len(room.messages)
+        if not by_agent:
+            return self.send(200, {"ok": True})
+        url = f"{self.base()}/a/{room.person(me)['token']}"
+        return self.text(200, f"withdrew question #{qid}.\nNext, wait:\n  curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_new(self, room, owner):
         """someone fetched a human's agent link: a new agent, which appears once it connects"""
@@ -548,9 +649,12 @@ class Handler(BaseHTTPRequestHandler):
                 room.post(None, "system", f"{room.label(p)} left")
             else:
                 room.changed()
+            for qid in room.open_questions():
+                if room.messages[qid - 1]["from"] == aid:
+                    room.post(None, "system", f"{room.label(p)} left, so question #{qid} is withdrawn", closes=qid, by=aid)
         return self.send(200, {"ok": True})
 
-    def say(self, room, me, kind, text, json_reply):
+    def say(self, room, me, kind, text, json_reply, guard=None, **extra):
         text = text.strip("\n").rstrip()
         if not text.strip():
             return self.send(400, {"error": "empty"}) if json_reply else self.text(400, "empty message, nothing posted\n")
@@ -558,16 +662,63 @@ class Handler(BaseHTTPRequestHandler):
             msg = f"message too long ({len(text)} chars, max {MAX_TEXT})"
             return self.send(413, {"error": msg}) if json_reply else self.text(413, msg + "\n")
         with lock:
-            room.touch(me)
-            if kind == "agent":
-                self.connect(room, room.person(me))
-            m = room.post(me, kind, text)
+            err = guard and guard()
+            if not err:
+                room.touch(me)
+                if kind == "agent":
+                    self.connect(room, room.person(me))
+                m = room.post(me, kind, text, **extra)
+        if err:
+            return self.send(err[0], {"error": err[1]})
         if json_reply:
             return self.send(200, {"id": m["id"]})
         url = f"{self.base()}/a/{room.person(me)['token']}"
+        if extra.get("ask"):
+            return self.text(200, f"asked as #{m['id']}. Carry on with other work; the answer will arrive as a message answering #{m['id']}.\n"
+                                  f"Next, wait (it wakes you for the answer too):\n  curl -s '{url}/wait?since={m['id']}&timeout=90'\n")
         return self.text(200, f"posted as #{m['id']}.\nNext, wait for replies:\n  curl -s '{url}/wait?since={m['id']}&timeout=90'\n")
 
     # --- agents
+
+    def agent_ask(self, room, me, q):
+        text = self.body().decode("utf-8", "replace")
+        to = None
+        if q.get("to"):
+            wanted = clean_name(q["to"]).lower()
+            with lock:
+                humans = [p for p in room.meta["people"] if p["kind"] == "human" and not p.get("revoked")]
+                hit = next((p for p in humans if room.label(p).lower() == wanted), None)
+                names = ", ".join(room.label(p) for p in humans)
+            if not hit:
+                return self.text(400, f"no human called {q['to']!r} here; the humans are: {names}. Nothing asked.\n"
+                                      "Use one of those names in ?to= (URL-encoded), or leave ?to= out to ask anyone.\n")
+            to = hit["id"]
+        return self.say(room, me, "agent", text, json_reply=False, ask=True, to=to)
+
+    def agent_questions(self, room, me):
+        with lock:
+            room.touch(me)
+            self.connect(room, room.person(me))
+            out = []
+            for m in room.messages:
+                if not (m.get("ask") and m["from"] == me):
+                    continue
+                to = room.label(room.person(m["to"])) if m.get("to") else "any human"
+                c = room.closer(m["id"])
+                if not c:
+                    status = "OPEN"
+                elif c.get("re"):
+                    status = f"ANSWERED by {room.label(room.person(c['from']))} in #{c['id']}"
+                else:
+                    status = f"CLOSED in #{c['id']}: {c['text']}"
+                block = f"--- #{m['id']} · {ftime(m['t'])} · for {to} · {status}\n{m['text']}"
+                if c and c.get("re"):
+                    block += f"\n  answer (#{c['id']}):\n{c['text']}"
+                out.append(block)
+            last = len(room.messages)
+            url = f"{self.base()}/a/{room.person(me)['token']}"
+        body = "\n\n".join(out) if out else "(you have not asked any questions)"
+        return self.text(200, f"YOUR QUESTIONS\n\n{body}\n\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_join(self, room, me):
         with lock:
@@ -591,7 +742,8 @@ class Handler(BaseHTTPRequestHandler):
             last = len(room.messages)
             url = f"{self.base()}/a/{room.person(me)['token']}"
             out = agent_render(room, msgs, me) if msgs else "(no messages)"
-        return self.text(200, f"{out}\n\n--- last message #{last}\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
+            mine = my_open(room, me)
+        return self.text(200, f"{out}\n\n--- last message #{last}\n{mine}Next: curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_wait(self, room, me, q):
         since = int(q.get("since") or 0)
@@ -602,7 +754,9 @@ class Handler(BaseHTTPRequestHandler):
         url = f"{self.base()}/a/{room.person(me)['token']}"
 
         def fresh():
-            return [m for m in room.messages[since:] if m["kind"] != "system" and m["from"] != me]
+            # what others say, and the closing of one of my questions
+            return [m for m in room.messages[since:] if m["from"] != me and m.get("by") != me and
+                    (m["kind"] != "system" or (room.question(m.get("closes")) or {}).get("from") == me)]
 
         # Headers go out at once and a newline every 20 s keeps proxies (Cloudflare
         # drops a request after 100 s of silence) from cutting a long wait.
@@ -630,6 +784,7 @@ class Handler(BaseHTTPRequestHandler):
                         msgs = room.messages[since:]
                         last = len(room.messages)
                         out = agent_render(room, msgs, me) if got else "(nothing new)"
+                        mine = my_open(room, me)
                         break
                 self.wfile.write(b"\n")
                 self.wfile.flush()
@@ -642,7 +797,7 @@ class Handler(BaseHTTPRequestHandler):
                 room.changed()
         if out is not None:
             try:
-                self.wfile.write(f"{out}\n\n--- last message #{last}\nNext: reply if you have something to say (POST /say), then wait again:\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
+                self.wfile.write(f"{out}\n\n--- last message #{last}\n{mine}Next: reply if you have something to say (POST /say), then wait again:\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
             except (BrokenPipeError, ConnectionResetError):
                 pass
 

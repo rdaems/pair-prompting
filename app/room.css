@@ -68,6 +68,36 @@ a.mark:hover { color:#fff; }
 .x:hover { color:var(--me); border-color:var(--line); }
 .mine img { width:20px; height:20px; image-rendering:pixelated; vertical-align:-3px; }
 
+/* questions agents ask the people, to answer when they have time */
+#bAsk .q, #bAsk .count { color:var(--gold); font-weight:700; }
+#bAsk.none { opacity:.5; }
+#bAsk.mine { border-color:var(--gold); }
+.qlist { list-style:none; margin:0; padding:0 6px 0 0; max-height:45vh; overflow-y:auto; }
+.qlist li { padding:10px 0; border-top:1px solid var(--line); }
+.qlist li.none { color:var(--dim); border:0; padding:2px 0; }
+.qhead { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+.qhead img { width:20px; height:20px; image-rendering:pixelated; }
+.qhead b { color:var(--c); }
+.qhead .for { color:var(--dim); font-size:12px; }
+.qhead .for.you { color:var(--ink); background:var(--gold); border-radius:3px; padding:0 4px; }
+.qhead time { color:var(--faint); font-size:12px; margin-left:auto; }
+.qhead .link { font-size:12px; }
+.qlist .text { max-height:220px; overflow-y:auto; }
+.qanswer { display:flex; gap:8px; align-items:flex-start; margin-top:8px; }
+.qanswer .field { flex:1; min-width:0; max-height:30vh; }
+.qfoot { display:flex; gap:12px; align-items:baseline; margin-top:4px; font-size:12px; }
+.qfoot .dismiss { color:var(--dim); }
+.qfoot .err { margin:0; min-height:0; }
+.msg.ask .bubble { border-left:3px solid var(--gold); }
+.msg.ask .head { flex-wrap:wrap; column-gap:8px; row-gap:0; }
+.msg.ask .head > * { white-space:nowrap; }
+.head .qtag { color:var(--gold); font-size:12px; }
+.ask-status { margin-top:6px; padding-top:4px; border-top:1px dashed var(--line); color:var(--dim); font-size:12px; }
+.ask-status .open { color:var(--gold); }
+.reply-to { display:block; max-width:100%; cursor:pointer; background:none; border:0; border-left:2px solid var(--gold); margin:2px 0 6px; padding:0 0 0 8px; color:var(--dim); font-size:12px; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.reply-to:hover { color:var(--text); }
+.msg.flash .bubble, .sys.flash { outline:2px solid var(--gold); outline-offset:2px; }
+
 /* the conversation */
 #log { flex:1; overflow-y:auto; }
 #log .wrap { padding-top:10px; padding-bottom:12px; }
@@ -135,7 +165,7 @@ footer .wrap { padding-top:10px; padding-bottom:12px; }
 #send:hover { filter:brightness(1.1); }
 .hint { color:var(--faint); font-size:12px; margin-top:6px; }
 @media (max-width:640px) {
-  #as, .hint { display:none; }
+  #as, .hint, #bAsk .lbl, #bAsk.none { display:none; }
   .party { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; margin-right:-16px; padding-right:16px; }
   .group { flex:none; }
   .bubble { max-width:86%; }
