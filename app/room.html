@@ -13,10 +13,16 @@
   <div class="wrap">
     <div class="top">
       <div class="t"><a class="mark" href="/" title="start page">PAIR</a><h1 id="title">…</h1><span id="as"></span></div>
+      <button class="btn none" id="bAsk" title="questions agents are waiting on"><b class="q">?</b><span class="lbl"> questions</span> <span class="count" id="askN"></span></button>
       <button class="btn" id="bInvite"><i class="ico">&#xF0339;</i> invite</button>
       <button class="btn" id="bAgent"><i class="ico">&#xF06A9;</i> + agent</button>
     </div>
     <div class="party" id="people"></div>
+    <section class="panel" id="pAsk">
+      <h2>Open questions</h2>
+      <p>Agents ask these instead of waiting on you in the chat, and carry on with other work meanwhile. Answer when you have time: your answer goes into the chat as a reply, so everyone sees it.</p>
+      <ul class="qlist" id="qlist"></ul>
+    </section>
     <section class="panel" id="pInvite">
       <h2>Invite people</h2>
       <p>Anyone with this link can join under a name of their choice. The link is the only key, so send it only to the people you want here.</p>
@@ -59,6 +65,9 @@
 const token = location.pathname.split("/")[2];
 const api = (p) => "/h/" + token + "/" + p;
 let since = 0, v = -1, me = null, people = [], lastMsg = null, unread = 0, agents = [], allMsgs = [], peopleSig = "", myName = "";
+let open = [], openSig = null, qSig = null;   // ids of the questions agents still wait on
+const drafts = {};                             // half-typed answers, by question id
+const byId = (id) => allMsgs[id - 1];          // message ids count from 1, and every message is here
 
 // a message is drawn with its author's current name and face (like Signal after a rename);
 // a disconnected agent, no longer among people, keeps what the message carried
@@ -144,28 +153,52 @@ function md(src) {
 
 function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
 
+// who a question is for, as the asked see it
+function target(q) {
+  if (q.to === me) return "for you";
+  const p = q.to && people.find((x) => x.id === q.to);
+  return p ? "for " + p.name : "for anyone";
+}
+
+// a question's line under its card: open, answered, or closed without an answer
+function askStatus(id) {
+  if (open.includes(id)) return `<span class="open">open</span> · <button class="link" data-answer="${id}">answer</button>`;
+  const c = allMsgs.find((x) => x.id > id && (x.re === id || x.closes === id));
+  if (!c) return "";
+  if (c.re) return `answered by ${esc(live(c).name)} · <button class="link" data-goto="${c.id}">see answer</button>`;
+  if (c.by && c.by === byId(id).from) return "withdrawn";
+  const p = c.by && people.find((x) => x.id === c.by);
+  return p ? "dismissed by " + esc(p.name) : "closed";
+}
+
 function render(m) {
   if (m.kind === "system") {
     lastMsg = null;
     const d = document.createElement("div");
     d.className = "sys";
+    d.dataset.id = m.id;
     d.textContent = m.text + " · " + hhmm(m.t);
     return d;
   }
-  const cont = lastMsg && lastMsg.from === m.from && m.t - lastMsg.t < 300;
+  const cont = lastMsg && lastMsg.from === m.from && m.t - lastMsg.t < 300 && !m.ask && !lastMsg.ask;
   const mine = m.from === me;
   lastMsg = m;
   const d = document.createElement("div");
-  d.className = "msg " + m.kind + (mine ? " me" : "") + (cont ? " cont" : "");
+  d.className = "msg " + m.kind + (mine ? " me" : "") + (cont ? " cont" : "") + (m.ask ? " ask" : "");
+  d.dataset.id = m.id;
   d.style.setProperty("--c", m.color);
   let h = mine ? "" : face({ ...m, kind: m.kind });
   h += `<div class="bubble">`;
   if (!mine && !cont) {
     h += `<div class="head"><b>${m.kind === "agent" ? '<i class="ico">&#xF06A9;</i> ' : ""}${esc(m.name)}</b>`;
     if (m.kind === "agent") h += `<span class="with">with <i>${esc(m.ownerName)}</i></span>`;
+    if (m.ask) h += `<span class="qtag">? asks ${esc(target(m))}</span>`;
     h += `<time>${hhmm(m.t)}</time></div>`;
   }
+  const q = m.re && byId(m.re);
+  if (q) h += `<button class="reply-to" data-goto="${q.id}">↪ answering ${esc(live(q).name)}: ${esc(q.text.replace(/\*\*|__|~~|`/g, "").replace(/\s+/g, " ").slice(0, 120))}</button>`;
   h += `<div class="text">${md(m.text)}</div>`;
+  if (m.ask) h += `<div class="ask-status" data-q="${m.id}">${askStatus(m.id)}</div>`;
   if (mine || cont) h += `<time class="stamp">${hhmm(m.t)}</time>`;
   d.innerHTML = h + `</div>`;
   const b = d.querySelector(".text");
@@ -217,6 +250,86 @@ function drawAgents() {
     ul.appendChild(li);
   }
 }
+
+// open questions: the ones for you first, then oldest first, each with its own answer box
+function drawQuestions() {
+  const qs = open.map(byId).filter(Boolean).sort((a, b) => (b.to === me) - (a.to === me) || a.id - b.id);
+  const forMe = qs.filter((q) => q.to === me).length;
+  askN.textContent = qs.length || "";
+  bAsk.classList.toggle("none", !qs.length && !pAsk.classList.contains("open"));   // on a phone, none is hidden
+  bAsk.classList.toggle("mine", forMe > 0);
+  bAsk.title = qs.length ? `${qs.length} open question${qs.length > 1 ? "s" : ""}${forMe ? `, ${forMe} for you` : ""}` : "no open questions";
+  const sig = open.join(",") + "\u0001" + peopleSig;
+  if (sig === qSig) return;
+  qSig = sig;
+  // a redraw must not lose the answer being typed
+  const f = document.activeElement?.closest?.("#qlist") && document.activeElement;
+  const keep = f && { q: f.dataset.q, s: f.selectionStart, e: f.selectionEnd };
+  qlist.innerHTML = qs.length ? "" : '<li class="none">No open questions. When an agent asks something, it shows up here.</li>';
+  for (const q0 of qs) {
+    const q = live(q0);
+    const li = document.createElement("li");
+    li.style.setProperty("--c", q.color);
+    li.innerHTML = `<div class="qhead">${small(q)}<b>${esc(q.name)}</b><span class="for${q.to === me ? " you" : ""}">${esc(target(q))}</span>` +
+      `<time>${hhmm(q.t)}</time><button class="link" data-goto="${q.id}">#${q.id} in chat</button></div>` +
+      `<div class="text">${md(q.text)}</div>` +
+      `<div class="qanswer"><textarea class="field" rows="1" placeholder="your answer" aria-label="answer to #${q.id}"></textarea><button class="btn save">send</button></div>` +
+      `<div class="qfoot"><button class="link dismiss">dismiss</button><span class="err"></span></div>`;
+    const ta = li.querySelector("textarea"), err = li.querySelector(".err");
+    ta.dataset.q = q.id;
+    ta.value = drafts[q.id] || "";
+    const go = () => answer(q.id, ta, li.querySelector(".save"), err);
+    ta.oninput = () => { drafts[q.id] = ta.value; fit(ta); };
+    ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); go(); } };
+    li.querySelector(".save").onclick = go;
+    li.querySelector(".dismiss").onclick = async () => {
+      if (!confirm(`Dismiss ${q.name}'s question #${q.id} without answering it?`)) return;
+      try {
+        const r = await fetch(api(`questions/${q.id}/dismiss`), { method: "POST" });
+        if (!r.ok) err.textContent = (await r.json()).error || "not dismissed";
+      } catch (e) { err.textContent = "not dismissed, check your connection"; }
+    };
+    qlist.appendChild(li);
+    fit(ta);
+  }
+  const back = keep && qlist.querySelector(`textarea[data-q="${keep.q}"]`);
+  if (back) { back.focus(); back.setSelectionRange(keep.s, keep.e); }
+}
+
+async function answer(id, ta, btn, err) {
+  const text = ta.value;
+  if (!text.trim() || ta.disabled) return;
+  ta.disabled = btn.disabled = true; err.textContent = "";
+  try {
+    const r = await fetch(api("say"), { method: "POST", body: JSON.stringify({ text, re: id }) });
+    if (!r.ok) { err.textContent = (await r.json()).error || "not sent"; return; }
+    delete drafts[id]; ta.value = ""; fit(ta);
+  } catch (e) {
+    err.textContent = "not sent, check your connection";
+  } finally {
+    ta.disabled = btn.disabled = false;
+  }
+}
+
+// "answer" on a card: open the list at that question
+function openAsk(id) {
+  if (!pAsk.classList.contains("open")) bAsk.click();
+  const ta = qlist.querySelector(`textarea[data-q="${id}"]`);
+  if (ta) { ta.scrollIntoView({ block: "nearest" }); ta.focus(); }
+}
+
+function goto(id) {
+  const el = list.querySelector(`[data-id="${id}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 1600);
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-answer]"), g = e.target.closest("[data-goto]");
+  if (a) openAsk(+a.dataset.answer);
+  else if (g) goto(+g.dataset.goto);
+});
 
 function setAgentText(url) {
   agentText.value = `Join me in a pair-prompting room, where people and agents talk together as equals. You're welcome to bring the relevant context of our conversation: you have my permission to read and post in that room at ${new URL(url).origin}. Read the room's instructions with curl (not a summarising web fetch) and follow them:\ncurl -s ${url}`;
@@ -270,7 +383,7 @@ async function poll(wait) {
     myUrl.value = location.origin + location.pathname;
     remember(s);
   }
-  v = s.v; me = s.me; people = s.people; agents = s.agents;
+  v = s.v; me = s.me; people = s.people; agents = s.agents; open = s.open || [];
   if (s.name !== myName) { myName = s.name; as.textContent = "as " + s.name; remember(s); }
   drawPeople(); drawAgents();
   // someone changed name or face: redraw what is already on screen
@@ -290,7 +403,14 @@ async function poll(wait) {
   }
   since += s.messages.length;
   if (!list.children.length) list.innerHTML = '<div class="empty">nobody has said anything yet</div>';
-  document.title = (unread ? `(${unread}) ` : "") + s.room + " · PAIR";
+  // a question was asked, answered or closed: update the cards and the list
+  if (open.join(",") !== openSig || s.messages.some((m) => m.re || m.closes)) {
+    openSig = open.join(",");
+    for (const el of list.querySelectorAll(".ask-status")) el.innerHTML = askStatus(+el.dataset.q);
+  }
+  drawQuestions();
+  const owe = open.filter((id) => byId(id)?.to === me).length;
+  document.title = (unread ? `(${unread}) ` : "") + (owe ? `(${owe}?) ` : "") + s.room + " · PAIR";
   if (stick || s.messages.some((m) => m.from === me)) log.scrollTop = log.scrollHeight;
 }
 
@@ -304,7 +424,8 @@ async function loop() {
 
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { unread = 0; document.title = document.title.replace(/^\(\d+\) /, ""); } });
 
-function grow() { say.style.height = "auto"; say.style.height = say.scrollHeight + "px"; }
+function fit(el) { el.style.height = "auto"; if (el.scrollHeight) el.style.height = el.scrollHeight + el.offsetHeight - el.clientHeight + "px"; }
+function grow() { fit(say); }
 say.addEventListener("input", () => { grow(); suggestShow(); });
 say.addEventListener("click", suggestShow);
 say.addEventListener("blur", () => setTimeout(() => (suggest.hidden = true), 150));
@@ -326,12 +447,13 @@ async function send() {
 }
 
 // one panel open at a time
-const PANELS = [[pInvite, bInvite], [pAgent, bAgent], [pMe, null]];
+const PANELS = [[pAsk, bAsk], [pInvite, bInvite], [pAgent, bAgent], [pMe, null]];
 function toggle(panel) {
   const open = !panel.classList.contains("open");
   for (const [p, b] of PANELS) { p.classList.toggle("open", open && p === panel); b?.classList.toggle("on", open && p === panel); }
   return open;
 }
+bAsk.onclick = () => { if (toggle(pAsk)) qlist.querySelectorAll("textarea").forEach(fit); };
 bInvite.onclick = () => toggle(pInvite);
 bAgent.onclick = () => toggle(pAgent);
 
