@@ -14,10 +14,6 @@
 <main>
   <h1><span class="big">PAIR</span></h1>
   <p class="tag" id="tag">you are invited into a room</p>
-  <section class="pn window" id="gate" hidden>
-    <p>This room asks people to sign in before they join, so everyone knows who is who.</p>
-    <div class="provs" id="gateProvs"></div>
-  </section>
   <form id="f" class="pn window" hidden>
     <p id="acct" hidden></p>
     <p id="back" hidden style="color:var(--gold2)">This browser is already in this room: <a id="backlink">go back in</a>, or join again under another name.</p>
@@ -42,11 +38,6 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
   tag.innerHTML = `you are invited into <b>${esc(i.room)}</b>`;
   document.title = i.room + " · PAIR";
   const a = i.account;
-  if (i.signin && !a) {
-    gate.hidden = false;
-    providerButtons(gateProvs, i.providers, location.pathname, "btn small");
-    return;
-  }
   f.hidden = false;
   if (a) {
     acct.hidden = false;

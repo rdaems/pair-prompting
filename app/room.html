@@ -22,10 +22,7 @@
       <h2>Invite people</h2>
       <p id="inviteWho"></p>
       <div class="copybox"><input class="field" id="inviteUrl" readonly><button class="btn" data-copy="inviteUrl"><i class="ico">&#xF018F;</i> copy</button></div>
-      <div class="choice" id="share" hidden>
-        <button class="btn" data-signin="">anyone with the link</button><button class="btn" data-signin="1">only if they sign in</button>
-        <button class="link" id="newLink">new link</button>
-      </div>
+      <div class="choice"><button class="link" id="newLink">new link</button></div>
       <h2>Your other devices</h2>
       <p id="acctLine" hidden></p>
       <div class="provs" id="provs" hidden></div>
@@ -355,15 +352,11 @@ async function send() {
 // how the room is shared, and whether this seat belongs to an account
 let sharingSig = "";
 function drawSharing(s) {
-  const sig = JSON.stringify([s.invite, s.signin, s.account, s.providers]);
+  const sig = JSON.stringify([s.invite, s.account, s.providers]);
   if (sig === sharingSig) return;
   sharingSig = sig;
   inviteUrl.value = s.invite;
-  inviteWho.textContent = s.signin
-    ? "Whoever has this link can join after signing in with " + s.providers.map((p) => p.name).join(", ").replace(/, ([^,]*)$/, " or $1") + "."
-    : "Anyone with this link can join under a name of their choice. The link is the only key, so send it only to the people you want here.";
-  share.hidden = !s.providers.length;
-  share.querySelectorAll("[data-signin]").forEach((b) => b.classList.toggle("on", !!b.dataset.signin === s.signin));
+  inviteWho.textContent = "Anyone with this link can join under a name of their choice. The link is the only key, so send it only to the people you want here. If it went too far, make a new one.";
   const a = s.account;
   acctLine.hidden = false;
   if (a) {
@@ -376,8 +369,6 @@ function drawSharing(s) {
     myLine.textContent = "Or keep this page's link: it is your seat in the room. Don't share it: whoever has it can post as you.";
   } else acctLine.hidden = true;
 }
-share.querySelectorAll("[data-signin]").forEach((b) => b.onclick = () =>
-  fetch(api("sharing"), { method: "POST", body: JSON.stringify({ signin: !!b.dataset.signin }) }));
 newLink.onclick = async () => {
   if (!confirm("Make a new invite link? The old one stops working; people already here stay.")) return;
   await fetch(api("sharing"), { method: "POST", body: JSON.stringify({ new_link: true }) });

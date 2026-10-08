@@ -11,7 +11,7 @@ token it is, never from the request.
 
 Signing in (auth.py) is optional and sits beside the links: an account remembers
 the seats its person holds, so their rooms follow them to every device, and a room
-can ask the people who join by its link to sign in first.
+is still nothing but its links: signing in only keeps them for you.
 
 State: data/rooms/<id>/room.json (name, people, tokens) + messages.jsonl
 (append-only), all loaded into memory at start.
@@ -454,7 +454,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.redirect(f"/h/{seat['token']}") if seat else self.page("join.html")
         if kind == "r" and hit and hit[0] == "invite" and rest == ["info"]:
             room = hit[1]
-            return self.send(200, {"room": room.meta["name"], "signin": bool(room.meta.get("signin")),
+            return self.send(200, {"room": room.meta["name"],
                                    "providers": self.providers(), "account": self.me_info()})
         if kind == "h" and hit and hit[0] == "human":
             if not rest:
@@ -534,7 +534,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(429, {"error": "too many rooms, try again later"})
             created[ip] = recent + [now()]
             rid = secrets.token_hex(6)
-            meta = {"id": rid, "name": name, "created": round(now()), "invite": tok(), "people": [], "signin": bool(b.get("signin"))}
+            meta = {"id": rid, "name": name, "created": round(now()), "invite": tok(), "people": []}
             room = Room(meta, [])
             os.makedirs(room.dir, exist_ok=True)
             open(os.path.join(room.dir, "messages.jsonl"), "a").close()
@@ -549,8 +549,6 @@ class Handler(BaseHTTPRequestHandler):
         b = self.json_body()
         who = clean_name(b.get("name"))
         account = self.account()
-        if room.meta.get("signin") and not account:
-            return self.send(401, {"error": "this room asks you to sign in first", "signin": True})
         if not who:
             return self.send(400, {"error": "a name is needed"})
         with lock:
@@ -591,7 +589,6 @@ class Handler(BaseHTTPRequestHandler):
                            if p["kind"] == "agent" and p["owner"] == me and p.get("joined") and not p.get("revoked")],
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
-                "signin": bool(room.meta.get("signin")),
                 "providers": self.providers(),
                 "account": ({"name": acc["name"], "via": auth.LABEL[acc["provider"]]}
                             if (acc := accounts.accounts.get(mine.get("account") or "")) else None),
@@ -605,14 +602,10 @@ class Handler(BaseHTTPRequestHandler):
             accounts.save()
 
     def sharing(self, room, me):
-        """anyone in the room may change who its link lets in, or replace the link; announced"""
+        """anyone in the room may replace its invite link (one that went too far); announced"""
         b = self.json_body()
         with lock:
             who = room.person(me)["name"]
-            if "signin" in b and bool(b["signin"]) != bool(room.meta.get("signin")):
-                room.meta["signin"] = bool(b["signin"])
-                room.save()
-                room.post(None, "system", f"{who} set the invite link to {'sign-in only' if room.meta['signin'] else 'anyone with it'}")
             if b.get("new_link"):
                 tokens.pop(room.meta["invite"], None)
                 room.meta["invite"] = tok()

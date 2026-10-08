@@ -28,11 +28,6 @@
     <input class="field" id="who" required maxlength="40" autocomplete="nickname">
     <label>Your face</label>
     <div class="faces"><button type="button" class="btn small" id="prevFace" title="previous face" aria-label="previous face">←</button><span class="face" id="faces"></span><button type="button" class="btn small" id="nextFace" title="another face" aria-label="another face">→</button></div>
-    <fieldset class="who-joins" id="whoJoins" hidden>
-      <legend>Who can join</legend>
-      <label><input type="radio" name="signin" value="" checked> anyone with the invite link</label>
-      <label><input type="radio" name="signin" value="1"> people with the link who sign in</label>
-    </fieldset>
     <div class="row"><button class="btn go">OPEN ROOM →</button></div>
     <div class="err" id="err"></div>
   </form>
@@ -65,7 +60,6 @@ bSignin.onclick = () => { pSignin.hidden = !pSignin.hidden; };
     if ((await r.json()).claimed) me = await (await fetch("/api/me")).json();
   }
   const a = me.account;
-  whoJoins.hidden = !me.providers.length;
   if (a) {
     acct.hidden = false;
     acct.innerHTML = `${a.avatar ? `<img alt="" src="${pixelAvatar(a.avatar, "human", "#8b93ad")}">` : ""}<span title="signed in with ${esc(a.via)}">${esc(a.name || a.via)}</span> <button type="button" class="btn small" onclick="signOut()">SIGN OUT</button>`;
@@ -80,8 +74,7 @@ bSignin.onclick = () => { pSignin.hidden = !pSignin.hidden; };
 f.onsubmit = async (e) => {
   e.preventDefault();
   try { localStorage.setItem("pairName", who.value.trim()); } catch (e) {}
-  const signin = !!f.querySelector("input[name=signin]:checked").value;
-  const r = await fetch("/api/rooms", { method: "POST", body: JSON.stringify({ room: room.value, name: who.value, avatar: face(), signin }) });
+  const r = await fetch("/api/rooms", { method: "POST", body: JSON.stringify({ room: room.value, name: who.value, avatar: face() }) });
   const j = await r.json();
   if (!r.ok) { err.textContent = j.error || "failed"; return; }
   location.href = j.url;
