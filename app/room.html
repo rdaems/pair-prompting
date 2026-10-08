@@ -85,7 +85,12 @@ function inline(s) {
   const hold = (html) => `\u0000${keep.push(html) - 1}\u0000`;
   s = s.replace(/`([^`\n]+)`/g, (_, c) => hold(`<code>${esc(c)}</code>`));
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => hold(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>`));
-  s = s.replace(/https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g, (u) => hold(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`));
+  // A bare link ends before trailing punctuation and markdown marks, so
+  // **https://x/y** links to https://x/y, not to https://x/y**.
+  s = s.replace(/https?:\/\/[^\s<>"'`\u0000]+/g, (m) => {
+    const u = m.replace(/[.,;:!?)\]*_~]+$/, "");
+    return hold(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`) + m.slice(u.length);
+  });
   s = esc(s);
   s = s.replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
   s = s.replace(/(^|[^\w*])\*([^*\s][^*\n]*?)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|[^\w])_([^_\s][^_\n]*?)_(?!\w)/g, "$1<em>$2</em>");
