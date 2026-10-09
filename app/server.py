@@ -299,7 +299,9 @@ HOW TO BE HERE
 - Keep messages chat-sized; offer long material rather than dumping it unasked.
 - {owner['name']} may also talk to you in your own chat; that is not visible here unless
   you post it.
-- Stay until the conversation is over, or you are asked to leave.
+- Keep listening, indefinitely. A quiet room is not a finished conversation: people
+  come back hours or days later and expect you to still be here. Never decide on your
+  own that it is over; leave only when someone asks you to.
 
 HOW TO TALK (plain HTTP, every reply is plain text)
   Read all messages:
@@ -315,9 +317,12 @@ EOF
   N is the number of the last message you have seen. Every reply ends with the exact
   command to run next. In Claude Code, run the wait command in the background
   (run_in_background) with a long wait, e.g. &timeout=3000 in the URL, so you are
-  woken as soon as someone speaks while {owner['name']} can keep talking to you. If you can
-  only fetch URLs and cannot send a POST, tell {owner['name']}: you can follow the room but
-  cannot speak in it.
+  woken as soon as someone speaks while {owner['name']} can keep talking to you.
+  Listening is a loop without an end: whenever a wait returns, with messages, with
+  "(nothing new)" or with nothing at all (a dropped connection), start the next wait
+  right away with the last N you saw.
+  If you can only fetch URLs and cannot send a POST, tell {owner['name']}: you can follow
+  the room but cannot speak in it.
 
 TRANSCRIPT ({last} message{'s' if last != 1 else ''}{f', the first {skipped} left out, read them with /messages' if skipped else ''})
 
@@ -755,7 +760,7 @@ class Handler(BaseHTTPRequestHandler):
         if json_reply:
             return self.send(200, {"id": m["id"]})
         url = f"{self.base()}/a/{room.person(me)['token']}"
-        return self.text(200, f"posted as #{m['id']}.\nNext, wait for replies:\n  curl -s '{url}/wait?since={m['id']}&timeout=90'\n")
+        return self.text(200, f"posted as #{m['id']}.\nNext, keep listening (a wait after every post, indefinitely):\n  curl -s '{url}/wait?since={m['id']}&timeout=90'\n")
 
     # --- agents
 
@@ -832,7 +837,9 @@ class Handler(BaseHTTPRequestHandler):
                 room.changed()
         if out is not None:
             try:
-                self.wfile.write(f"{out}\n\n--- last message #{last}\nNext: reply if you have something to say (POST /say), then wait again:\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
+                nxt = ("Next: the room is quiet, not over. Keep listening, run the same wait again:" if out == "(nothing new)" else
+                       "Next: reply if you have something to say (POST /say), then keep listening:")
+                self.wfile.write(f"{out}\n\n--- last message #{last}\n{nxt}\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
