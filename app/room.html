@@ -55,8 +55,8 @@
     <div class="board-head"><b>▦ board</b><span id="boardBy"></span><button class="x" id="boardClose" title="close"><i class="ico">&#xF0156;</i></button></div>
     <div class="board-screen" id="boardScreen"><img id="boardImg" alt="the board"><p id="boardEmpty">Nothing on the board yet. Agents draw here to keep the state of the conversation in view: decisions, options, a plan.</p></div>
   </aside>
+  <canvas id="floor" aria-hidden="true" hidden></canvas>
 </div>
-<canvas id="floor" aria-hidden="true"></canvas>
 <footer>
   <div class="wrap">
     <ul class="suggest" id="suggest" hidden></ul>
@@ -419,7 +419,16 @@ bBoard.onclick = () => setBoard(!boardOpen);
 boardClose.onclick = () => setBoard(false);
 addEventListener("resize", sizeBoard);
 
-// ---- the floor: everyone present walks along the bottom, as busy as they have been lately
+// ---- the floor: everyone present walks about in the empty margin beside the conversation,
+// as busy as they have been lately. Decoration only: it takes no space, and where the
+// margin is too narrow (phones, a narrow window, the board open) it is simply not there.
+function sizeFloor() {
+  const gap = Math.floor(list.getBoundingClientRect().left - log.getBoundingClientRect().left) - 12;
+  floor.hidden = gap < 110;
+  if (!floor.hidden) floor.style.width = gap + "px";
+}
+addEventListener("resize", sizeFloor);
+new ResizeObserver(sizeFloor).observe(log);
 const FW = () => Math.max(60, Math.floor(floor.clientWidth / 2)), FH = 28;
 const walkers = new Map(), sprites = new Map();
 const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -491,9 +500,7 @@ function floorTick(ts) {
   }
 }
 requestAnimationFrame(floorTick);
-// on a phone the floor makes way for the keyboard
-say.addEventListener("focus", () => { if (matchMedia("(pointer: coarse)").matches) floor.hidden = true; });
-say.addEventListener("blur", () => { floor.hidden = false; });
+sizeFloor();
 
 async function loop() {
   try { await poll(false); } catch (e) {}

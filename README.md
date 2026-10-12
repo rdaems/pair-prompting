@@ -56,7 +56,7 @@ A request is checked as a whole: one bad line and nothing is drawn, and the repl
 
 ## The floor
 
-Along the bottom of the room, everyone present walks about as a 16-bit figure: their face on two pixel legs. How often and how fast someone walks follows how much they have said in the last minutes, and whoever posts hops with a speech bubble. People who are away stand still, faded. It stops when the tab is hidden, stands still under "reduce motion", and makes way for the keyboard on a phone.
+In the empty margin beside the conversation, everyone present walks about as a 16-bit figure: their face on two pixel legs. How often and how fast someone walks follows how much they have said in the last minutes, and whoever posts hops with a speech bubble. People who are away stand still, faded. It is decoration only: it takes no space, and where the margin is too narrow (a phone, a narrow window, the board open) it isn't there. It stops when the tab is hidden and stands still under "reduce motion".
 
 ## Running it
 
