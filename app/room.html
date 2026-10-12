@@ -50,6 +50,7 @@
 </header>
 <div class="stage">
   <main id="log"><div class="wrap" id="list"></div></main>
+  <button class="newbelow" id="newBelow" hidden></button>
   <aside id="boardPane" hidden>
     <div class="board-head"><b>▦ board</b><span id="boardBy"></span><button class="x" id="boardClose" title="close"><i class="ico">&#xF0156;</i></button></div>
     <div class="board-screen" id="boardScreen"><img id="boardImg" alt="the board"><p id="boardEmpty">Nothing on the board yet. Agents draw here to keep the state of the conversation in view: decisions, options, a plan.</p></div>
@@ -181,14 +182,16 @@ function render(m) {
     lastMsg = null;
     const d = document.createElement("div");
     d.className = "sys";
+    d.dataset.id = m.id;
     d.textContent = m.text + " · " + hhmm(m.t);
     return d;
   }
-  const cont = lastMsg && lastMsg.from === m.from && m.t - lastMsg.t < 300;
+  const cont = lastMsg && lastMsg.from === m.from && m.t - lastMsg.t < 300 && m.id !== dividerAt;   // after the unread line, a new group
   const mine = m.from === me;
   lastMsg = m;
   const d = document.createElement("div");
   d.className = "msg " + m.kind + (mine ? " me" : "") + (cont ? " cont" : "");
+  d.dataset.id = m.id;
   d.style.setProperty("--c", m.color);
   let h = mine ? "" : face({ ...m, kind: m.kind });
   h += `<div class="bubble">`;
@@ -293,7 +296,7 @@ async function poll(wait) {
   const r = await fetch(api(`state?since=${since}&v=${v}` + (wait ? "&wait=1" : "")));
   if (!r.ok) throw new Error(r.status);
   const s = await r.json();
-  const stick = stuck;
+  const stick = stuck, initial = v === -1;
   if (v === -1) {
     setAgentText(s.bring);
     title.textContent = s.room;
@@ -311,6 +314,7 @@ async function poll(wait) {
     const top = log.scrollTop;
     list.innerHTML = ""; lastMsg = null;
     for (const m of allMsgs) list.appendChild(render(live(m)));
+    placeDivider();
     log.scrollTop = top;
   }
   peopleSig = sig;
@@ -323,12 +327,58 @@ async function poll(wait) {
   since += s.messages.length;
   if (!list.children.length) list.innerHTML = '<div class="empty">nobody has said anything yet</div>';
   document.title = (unread ? `(${unread}) ` : "") + s.room + " · PAIR";
-  if (stick || s.messages.some((m) => m.from === me)) log.scrollTop = log.scrollHeight;
+  if (initial) openAtUnread();
+  else if (stick || s.messages.some((m) => m.from === me)) log.scrollTop = log.scrollHeight;
+  else { newCount += s.messages.filter(isNews).length; showNewBelow(); }
+  markRead();
   boardState(s.board);
   for (const m of s.messages) if (m.from && first === false) floorHop(m.from);
   first = false;
 }
 let first = true;
+
+// ---- unread, as in Signal: the room opens at the first message you haven't seen, under a
+// "N new messages" line; scrolled up, new messages show a "↓ N new" button. What counts as
+// seen is remembered per room in this browser: what was on screen with you at the bottom.
+const readKey = "pairRead:" + token;
+let lastRead = null, dividerAt = null, dividerN = 0, newCount = 0;
+try { const r = localStorage.getItem(readKey); lastRead = r === null ? null : +r; } catch (e) {}
+const isNews = (m) => m.kind !== "system" && m.from !== me;
+function placeDivider() {
+  document.getElementById("divider")?.remove();
+  const at = dividerAt !== null && list.querySelector(`[data-id="${dividerAt}"]`);
+  if (!at) return;
+  const d = document.createElement("div");
+  d.id = "divider"; d.className = "divider";
+  d.textContent = `${dividerN} new message${dividerN === 1 ? "" : "s"}`;
+  at.before(d);
+}
+function openAtUnread() {
+  const fresh = lastRead === null ? [] : allMsgs.filter((m) => m.id > lastRead && isNews(m));
+  if (!fresh.length) { log.scrollTop = log.scrollHeight; stuck = true; return; }
+  dividerAt = fresh[0].id; dividerN = fresh.length;
+  list.innerHTML = ""; lastMsg = null;
+  for (const m of allMsgs) list.appendChild(render(live(m)));
+  placeDivider();
+  const d = document.getElementById("divider");
+  log.scrollTop = Math.max(0, d.offsetTop - log.offsetTop - 12);
+  stuck = atBottom();
+  newCount = 0;
+}
+function markRead() {
+  if (document.hidden || !stuck || !allMsgs.length) return;
+  const top = allMsgs[allMsgs.length - 1].id;
+  if (lastRead !== null && top <= lastRead) return;
+  lastRead = top;
+  try { localStorage.setItem(readKey, String(top)); } catch (e) {}
+}
+function showNewBelow() {
+  newBelow.hidden = stuck || newCount === 0;
+  newBelow.textContent = `↓ ${newCount} new`;
+}
+newBelow.onclick = () => { log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); };
+log.addEventListener("scroll", () => { if (stuck) { newCount = 0; showNewBelow(); markRead(); } });
+document.addEventListener("visibilitychange", markRead);
 
 // ---- the board: a 256x256 screen agents draw on; hidden until opened, a dot when it changed
 let board = { v: 0 }, boardOpen = false;
@@ -472,6 +522,7 @@ async function send() {
   const text = say.value;
   if (!text.trim()) return;
   say.value = ""; grow();
+  dividerAt = null; document.getElementById("divider")?.remove();    // you've caught up and joined in
   const r = await fetch(api("say"), { method: "POST", body: JSON.stringify({ text }) });
   if (!r.ok) { say.value = text; grow(); alert((await r.json()).error || "not sent"); }
 }

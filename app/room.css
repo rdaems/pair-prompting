@@ -175,3 +175,11 @@ aside#boardPane { flex:none; padding:12px 16px 12px 0; display:flex; flex-direct
   .top .btn .lbl { display:none; }
   .top .btn { padding:4px 9px; }
 }
+
+/* unread: a line above the first message you haven't seen, and a way down */
+.divider { display:flex; align-items:center; gap:10px; color:var(--me); font-size:12px; margin:16px 0 4px; }
+.divider::before, .divider::after { content:""; flex:1; border-top:1px solid var(--me); opacity:.6; }
+.newbelow { position:absolute; left:50%; bottom:12px; transform:translateX(-50%); z-index:4; cursor:pointer;
+  background:var(--me); color:var(--ink); border:0; border-radius:99px; padding:5px 14px; font:inherit; font-size:13px; font-weight:700;
+  box-shadow:0 4px 14px rgba(0,0,0,.5); }
+.newbelow[hidden] { display:none; }
