@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import auth
+import board
 
 DATA = os.environ.get("PAIR_DATA", "/data")
 APP = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +85,7 @@ class Room:
         self.version = 0          # bumped on every change humans should see
         self.waiting = {}         # participant id -> open wait requests
         self.seen = {}            # participant id -> last request time
+        self.board = board.Board(self.dir)   # the 256x256 screen agents draw on
 
     @property
     def dir(self):
@@ -258,6 +260,23 @@ def agent_render(room, msgs, me):
     return "\n\n".join(out)
 
 
+def board_status(room):
+    """one line for every agent reply: where the board stands"""
+    e = room.board.last()
+    if not e:
+        return "Board: empty (see BOARD in your instructions to draw on it)"
+    p = room.person(e["by"])
+    return f"Board v{room.board.v} · last drawn by {room.label(p)} at {ftime(e['t'])} · GET /board to read it"
+
+
+def board_listing(room):
+    """the commands on the board since its last clear, each with who drew it"""
+    out = []
+    for e in room.board.log:
+        out.append(f"{e['line']}    # {room.label(room.person(e['by']))} {ftime(e['t'])}")
+    return "\n".join(out)
+
+
 def agent_intro(room, me, base):
     a = room.person(me)
     owner = room.person(a["owner"])
@@ -323,6 +342,30 @@ EOF
   right away with the last N you saw.
   If you can only fetch URLs and cannot send a POST, tell {owner['name']}: you can follow
   the room but cannot speak in it.
+
+THE BOARD
+The room has a shared screen of 256x256 pixels in 16-bit colour, shown next to the chat.
+It is for agents to keep the state of the conversation visible at a glance: decisions
+taken, open questions, options side by side, a plan, a small diagram. People look at it,
+agents draw on it. Draw with one command per line:
+{board.GRAMMAR}
+  Draw (all lines are checked first; one bad line and nothing is drawn):
+curl -s '{url}/board' --data-binary @- <<'EOF'
+clear #1a2448
+big 6 6 #ffe27a DECISIONS
+text 6 30 #ffffff 1. Saturday in Ghent
+EOF
+  Read what is on it (the commands since the last clear, with who drew them):
+    curl -s '{url}/board'
+  Look at it: curl -s -o board.png '{url}/board.png' and open the image.
+  Keep it useful: update it when the conversation moves, redraw the whole board rather
+  than piling on, keep text legible (about 50 characters a line, 28 lines), and if
+  another agent keeps the board, add to their layout or say in the chat that you take
+  it over or which part you use. No message is posted when you draw; mention it in the
+  chat when it matters.
+
+BOARD NOW: {f"v{room.board.v}, {len(room.board.log)} commands since its last clear:" if room.board.log else "empty"}
+{board_listing(room)}
 
 TRANSCRIPT ({last} message{'s' if last != 1 else ''}{f', the first {skipped} left out, read them with /messages' if skipped else ''})
 
@@ -466,6 +509,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.page("room.html")
             if rest == ["state"]:
                 return self.human_state(hit[1], hit[2], q)
+            if rest == ["board.png"]:
+                return self.board_png(hit[1])
         if kind == "n" and hit and hit[0] == "bring" and not rest:
             return self.agent_new(hit[1], hit[2])
         if kind == "a" and hit and hit[0] == "agent":
@@ -478,6 +523,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.agent_wait(room, me, q)
             if rest == ["say"]:
                 return self.text(405, "post the message as the request body: curl --data-binary @- ...\n")
+            if rest == ["board"]:
+                return self.agent_board(room, me)
+            if rest == ["board.png"]:
+                return self.board_png(room)
         if kind == "a":
             return self.text(404, "This agent link is not valid (any more). Ask your human for a new one.\n")
         return self.text(404, "not found\n")
@@ -515,6 +564,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.sharing(room, me)
                 if len(rest) == 3 and rest[0] == "agents" and rest[2] == "revoke":
                     return self.revoke_agent(room, me, rest[1])
+            if kind == "a" and hit and hit[0] == "agent" and rest == ["board"]:
+                return self.agent_draw(hit[1], hit[2])
             if kind == "a" and hit and hit[0] == "agent" and rest == ["say"]:
                 text = self.body().decode("utf-8", "replace")
                 return self.say(hit[1], hit[2], "agent", text, json_reply=False)
@@ -594,6 +645,8 @@ class Handler(BaseHTTPRequestHandler):
                            if p["kind"] == "agent" and p["owner"] == me and p.get("joined") and not p.get("revoked")],
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
+                "board": ({"v": room.board.v, "by": room.label(room.person(e["by"])), "t": e["t"]}
+                          if (e := room.board.last()) else {"v": room.board.v}),
                 "providers": self.providers(),
                 "account": ({"name": acc["name"], "via": auth.LABEL[acc["provider"]]}
                             if (acc := accounts.accounts.get(mine.get("account") or "")) else None),
@@ -777,6 +830,36 @@ class Handler(BaseHTTPRequestHandler):
             room.save()
             room.post(None, "system", f"{room.label(p)} joined, with {room.person(p['owner'])['name']}")
 
+    def board_png(self, room):
+        with lock:
+            png = room.board.png()
+        return self.send(200, png, "image/png", {"Cache-Control": "max-age=31536000, immutable"})
+
+    def agent_board(self, room, me):
+        with lock:
+            room.touch(me)
+            self.connect(room, room.person(me))
+            url = f"{self.base()}/a/{room.person(me)['token']}"
+            listing = board_listing(room)
+            head = board_status(room)
+        return self.text(200, f"{head}\n\n{listing or '(nothing drawn since the last clear)'}\n\n"
+                              f"Look at it: curl -s -o board.png '{url}/board.png'\nDraw: POST commands to {url}/board\n")
+
+    def agent_draw(self, room, me):
+        body = self.body().decode("utf-8", "replace")
+        with lock:
+            room.touch(me)
+            self.connect(room, room.person(me))
+            try:
+                n = room.board.draw(body, me, now())
+            except ValueError as e:
+                return self.text(400, f"nothing drawn: {e}\n\nCommands:\n{board.GRAMMAR}\n")
+            room.changed()            # people see it at once; agents' waits are not woken by it
+            url = f"{self.base()}/a/{room.person(me)['token']}"
+            v = room.board.v
+        return self.text(200, f"drawn: {n} command{'s' if n != 1 else ''}, board v{v}.\n"
+                              f"Look at it: curl -s -o board.png '{url}/board.png'\n")
+
     def agent_messages(self, room, me, q):
         since = int(q.get("since") or 0)
         with lock:
@@ -786,7 +869,8 @@ class Handler(BaseHTTPRequestHandler):
             last = len(room.messages)
             url = f"{self.base()}/a/{room.person(me)['token']}"
             out = agent_render(room, msgs, me) if msgs else "(no messages)"
-        return self.text(200, f"{out}\n\n--- last message #{last}\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
+            status = board_status(room)
+        return self.text(200, f"{out}\n\n--- last message #{last}\n{status}\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_wait(self, room, me, q):
         since = int(q.get("since") or 0)
@@ -825,6 +909,7 @@ class Handler(BaseHTTPRequestHandler):
                         msgs = room.messages[since:]
                         last = len(room.messages)
                         out = agent_render(room, msgs, me) if got else "(nothing new)"
+                        status = board_status(room)
                         break
                 self.wfile.write(b"\n")
                 self.wfile.flush()
@@ -839,7 +924,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 nxt = ("Next: the room is quiet, not over. Keep listening, run the same wait again:" if out == "(nothing new)" else
                        "Next: reply if you have something to say (POST /say), then keep listening:")
-                self.wfile.write(f"{out}\n\n--- last message #{last}\n{nxt}\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
+                self.wfile.write(f"{out}\n\n--- last message #{last}\n{status}\n{nxt}\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
