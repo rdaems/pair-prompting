@@ -17,7 +17,6 @@
       <div class="t"><a class="mark" href="/" title="start page">PAIR</a><h1 id="title">…</h1><span id="as"></span></div>
       <button class="btn" id="bInvite" title="invite people"><i class="ico">&#xF0339;</i><span class="lbl"> invite</span></button>
       <button class="btn" id="bAgent" title="bring an agent"><i class="ico">&#xF06A9;</i><span class="lbl"> + agent</span></button>
-      <button class="btn" id="bBoard" title="the board agents paint on">▦<span class="lbl"> board</span><span class="news" id="boardNews" hidden></span></button>
     </div>
     <div class="party" id="people"></div>
     <section class="panel" id="pInvite">
@@ -52,10 +51,6 @@
 <div class="stage">
   <main id="log"><div class="wrap" id="list"></div></main>
   <button class="newbelow" id="newBelow" hidden></button>
-  <aside id="boardPane" hidden>
-    <div class="board-head"><b>▦ board</b><span id="boardBy"></span><button class="x" id="boardClose" title="close"><i class="ico">&#xF0156;</i></button></div>
-    <div class="board-screen" id="boardScreen"><img id="boardImg" alt="the board"><p id="boardEmpty">Nothing painted yet.</p></div>
-  </aside>
   <canvas id="floor" aria-hidden="true" hidden></canvas>
 </div>
 <footer>
@@ -332,7 +327,6 @@ async function poll(wait) {
   else if (stick || s.messages.some((m) => m.from === me)) log.scrollTop = log.scrollHeight;
   else { newCount += s.messages.filter(isNews).length; showNewBelow(); }
   markRead();
-  boardState(s.board);
   for (const m of s.messages) if (m.from && first === false) floorView.hop(m.from);
   first = false;
 }
@@ -381,48 +375,9 @@ newBelow.onclick = () => { log.scrollTo({ top: log.scrollHeight, behavior: "smoo
 log.addEventListener("scroll", () => { if (stuck) { newCount = 0; showNewBelow(); markRead(); } });
 document.addEventListener("visibilitychange", markRead);
 
-// ---- the board: a 256x256 screen agents paint on; hidden until opened, a dot when it changed
-let board = { v: 0 }, boardOpen = false;
-const seenKey = "pairBoardSeen:" + token;
-try { boardOpen = localStorage.getItem("pairBoardOpen") === "1" && innerWidth >= 1100; } catch (e) {}
-function boardState(b) {
-  board = b || { v: 0 };
-  let seen = 0;
-  try { seen = +(localStorage.getItem(seenKey) || 0); } catch (e) {}
-  boardNews.hidden = boardOpen || board.v <= seen;
-  if (boardOpen) showBoard();
-}
-function showBoard() {
-  boardPane.hidden = false; bBoard.classList.add("on");
-  boardEmpty.hidden = board.v > 0 && !!board.by;
-  boardImg.hidden = !boardEmpty.hidden;
-  const src = api(`board.png?v=${board.v}`);
-  if (!boardImg.hidden && boardImg.getAttribute("src") !== src) boardImg.src = src;
-  boardBy.textContent = board.by ? `painted by ${board.by} · ${hhmm(board.t)}` : "";
-  try { localStorage.setItem(seenKey, String(board.v)); } catch (e) {}
-  boardNews.hidden = true;
-  sizeBoard();
-}
-function setBoard(open) {
-  boardOpen = open;
-  try { localStorage.setItem("pairBoardOpen", open ? "1" : "0"); } catch (e) {}
-  if (open) showBoard(); else { boardPane.hidden = true; bBoard.classList.remove("on"); }
-}
-// whole device pixels per board pixel, as large as the space allows, so the pixels stay square
-function sizeBoard() {
-  if (boardPane.hidden) return;
-  const dpr = devicePixelRatio || 1, wide = innerWidth >= 1100;
-  const room = wide ? Math.min(innerWidth - 840, innerHeight - 200, 512) : Math.min(innerWidth - 32, innerHeight - 160);
-  const k = Math.max(1, Math.floor((room * dpr) / 256));
-  boardScreen.style.width = boardScreen.style.height = (256 * k) / dpr + "px";
-}
-bBoard.onclick = () => setBoard(!boardOpen);
-boardClose.onclick = () => setBoard(false);
-addEventListener("resize", sizeBoard);
-
 // ---- the floor (floor.js): everyone in the room, living in the empty margin beside the
 // conversation. Decoration only: where the margin is too narrow (phones, a narrow
-// window, the board open) it is simply not there.
+// window) it is simply not there.
 const floorView = startFloor(floor, {
   people: () => people,
   messages: () => allMsgs,

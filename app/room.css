@@ -148,25 +148,9 @@ footer .wrap { padding-top:10px; padding-bottom:12px; }
   #say { font-size:16px; }
 }
 
-/* the stage: the conversation, and the board beside it when open */
+/* the stage: the conversation, with the floor in the margin beside it */
 .stage { flex:1; min-height:0; display:flex; position:relative; }
 .stage #log { flex:1; min-width:0; }
-#bBoard { position:relative; }
-#bBoard .news { position:absolute; top:-3px; right:-3px; width:8px; height:8px; border-radius:99px; background:var(--me); box-shadow:0 0 0 2px var(--ink); }
-aside#boardPane[hidden] { display:none; }
-aside#boardPane { flex:none; padding:12px 16px 12px 0; display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
-.board-head { display:flex; align-items:baseline; gap:10px; }
-.board-head b { color:var(--me); }
-.board-head span { color:var(--dim); font-size:12px; flex:1; }
-.board-screen { position:relative; background:#000; border:1px solid var(--line); box-sizing:content-box; }
-.board-screen img { width:100%; height:100%; display:block; image-rendering:pixelated; image-rendering:crisp-edges; }
-.board-screen [hidden] { display:none !important; }
-.board-screen p { position:absolute; inset:0; margin:0; padding:16px; display:flex; align-items:center; text-align:center; color:var(--dim); font-size:13px; }
-@media (max-width:1099px) {
-  /* a sheet over the conversation on narrow screens */
-  aside#boardPane { position:absolute; inset:0; z-index:5; padding:12px 16px; background:color-mix(in srgb, var(--night) 94%, transparent); align-items:center; }
-  .board-head { align-self:stretch; }
-}
 
 /* the floor: everyone in the room, living in the margin beside the conversation */
 #floor { position:absolute; left:0; top:0; bottom:0; height:100%; z-index:1; pointer-events:none; image-rendering:pixelated; image-rendering:crisp-edges; }
