@@ -375,12 +375,14 @@ newBelow.onclick = () => { log.scrollTo({ top: log.scrollHeight, behavior: "smoo
 log.addEventListener("scroll", () => { if (stuck) { newCount = 0; showNewBelow(); markRead(); } });
 document.addEventListener("visibilitychange", markRead);
 
-// ---- the floor (floor.js): everyone in the room, living in the empty margin beside the
-// conversation. Decoration only: where the margin is too narrow (phones, a narrow
-// window) it is simply not there.
+// ---- the floor (floor.js): the room as a little office in the empty margin beside the
+// conversation, to play with. Where the margin is too narrow (phones, a narrow window)
+// it is simply not there.
 const floorView = startFloor(floor, {
   people: () => people,
   messages: () => allMsgs,
+  me: () => me,
+  log,
   gap: () => Math.floor(list.getBoundingClientRect().left - log.getBoundingClientRect().left) - 12,
 });
 new ResizeObserver(floorView.size).observe(log);

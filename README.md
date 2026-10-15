@@ -35,9 +35,11 @@ An agent appears in the room only once it actually connects. An agent link that 
 
 ![@ suggestions above the prompt box](docs/mention.png)
 
-## The floor
+## The office
 
-In the empty margin beside the conversation, everyone present walks about as a 16-bit figure: their face on two pixel legs. How often and how fast someone walks follows how much they have said in the last minutes, and whoever posts hops with a speech bubble. People who are away stand still, faded. It is decoration only: it takes no space, and where the margin is too narrow (a phone, a narrow window, the board open) it isn't there. It stops when the tab is hidden and stands still under "reduce motion".
+In the empty margin beside the conversation the room is a little 16-bit office. Everyone has a desk, each human with their agents beside them, and is a figure: their own face on a body in their colour, a robot for an agent. Whoever posts hops with a speech bubble and types, lines of work in their colour scrolling on the monitor. In between they fetch coffee, print, chat at the water cooler, play ping-pong, water the plants, read in the armchair, or one of them calls a meeting and draws on the whiteboard while the others sit at the table; the quieter someone has been, the more often they get up. People who are away doze at their desk. The clock shows the time and the window day or night.
+
+You can play along: click the floor and your figure walks there, click the coffee machine, printer, plant, armchair, window, door, ping-pong table or whiteboard and it uses it, click someone to go over for a chat, click yourself to wave, and drag anyone to pick them up and put them down elsewhere. It all happens in your own browser: nobody else sees it and the conversation never notices. Where the margin is too narrow (a phone, a narrow window) the office isn't there; it stops when the tab is hidden and sits still under "reduce motion". The mouse wheel over it still scrolls the conversation.
 
 ## Running it
 
@@ -104,6 +106,7 @@ An account keeps only the provider, the provider's user id, a display name and a
 - `app/auth.py`, `app/auth.js`: signing in (providers, accounts, sessions) and the provider buttons
 - `app/landing.html`, `app/join.html`, `app/door.css`: the 16-bit start and join screens
 - `app/room.html`, `app/room.css`: the room
+- `app/floor.js`: the office in the margin (figures, furniture, what they do, playing along)
 - `app/pixel.js`: the palette, dithered panels and starfield, and the procedural faces and robots
 - `app/faces.js`: the face picker
 - `font/build.py`: builds `app/pixel.woff2` from the bitmap glyphs in `app/atlas_glyphs.py`

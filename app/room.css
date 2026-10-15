@@ -152,8 +152,8 @@ footer .wrap { padding-top:10px; padding-bottom:12px; }
 .stage { flex:1; min-height:0; display:flex; position:relative; }
 .stage #log { flex:1; min-width:0; }
 
-/* the floor: everyone in the room, living in the margin beside the conversation */
-#floor { position:absolute; left:0; top:0; bottom:0; height:100%; z-index:1; pointer-events:none; image-rendering:pixelated; image-rendering:crisp-edges; }
+/* the floor: the room as a little office in the margin beside the conversation */
+#floor { position:absolute; left:0; top:0; bottom:0; height:100%; z-index:1; touch-action:none; image-rendering:pixelated; image-rendering:crisp-edges; }
 #floor[hidden] { display:none; }
 @media (max-width:640px) {
   /* icons only in the header, so the room's name keeps its place */
