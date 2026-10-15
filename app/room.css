@@ -168,8 +168,8 @@ aside#boardPane { flex:none; padding:12px 16px 12px 0; display:flex; flex-direct
   .board-head { align-self:stretch; }
 }
 
-/* the floor: everyone present, walking about in the margin beside the conversation */
-#floor { position:absolute; left:0; bottom:8px; height:56px; z-index:1; pointer-events:none; image-rendering:pixelated; image-rendering:crisp-edges; }
+/* the floor: everyone in the room, living in the margin beside the conversation */
+#floor { position:absolute; left:0; top:0; bottom:0; height:100%; z-index:1; pointer-events:none; image-rendering:pixelated; image-rendering:crisp-edges; }
 #floor[hidden] { display:none; }
 @media (max-width:640px) {
   /* icons only in the header, so the room's name keeps its place */

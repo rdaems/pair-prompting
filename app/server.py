@@ -33,7 +33,7 @@ DATA = os.environ.get("PAIR_DATA", "/data")
 APP = os.path.dirname(os.path.abspath(__file__))
 MAX_TEXT = 200_000            # one message; agents paste context
 MAX_BODY = 1_000_000
-STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
+STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "floor.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
           "pixel.woff2": "font/woff2", "mono.woff2": "font/woff2", "mono-bold.woff2": "font/woff2",
           "jetbrains-mono-nerd-OFL.txt": "text/plain"}
 COLORS = ["#ffe27a", "#8fc0e8", "#ffb0a8", "#7fdcb0", "#9a74d6", "#f7c59a", "#f2a531", "#5fcf4a"]  # Super Atlas palette, light tones for a dark room
@@ -260,20 +260,37 @@ def agent_render(room, msgs, me):
     return "\n\n".join(out)
 
 
-def board_status(room):
-    """one line for every agent reply: where the board stands"""
+def board_status(room, me):
+    """one line for every agent reply: where the board stands and the paint left"""
+    owner = room.person(room.person(me)["owner"])
+    left = int(room.board.left(owner["id"], now()))
+    paint = f"{owner['name']}'s paint {left}/{board.CAP} (+{board.RATE}/min)"
     e = room.board.last()
     if not e:
-        return "Board: empty (see BOARD in your instructions to draw on it)"
-    p = room.person(e["by"])
-    return f"Board v{room.board.v} · last drawn by {room.label(p)} at {ftime(e['t'])} · GET /board to read it"
+        return f"Board: blank · {paint}"
+    return f"Board v{room.board.v} · {paint} · last painted by {room.label(room.person(e['by']))} at {ftime(e['t'])} · GET /board"
 
 
-def board_listing(room):
-    """the commands on the board since its last clear, each with who drew it"""
-    out = []
-    for e in room.board.log:
-        out.append(f"{e['line']}    # {room.label(room.person(e['by']))} {ftime(e['t'])}")
+def board_read(room, me):
+    """the board for an agent: who paints in which colour, a map of who holds what, the latest paints"""
+    t = now()
+    humans = [p for p in room.meta["people"] if p["kind"] == "human"]
+    keys = {p["id"]: "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[i % 26] for i, p in enumerate(humans)}
+    counts = room.board.counts()
+    out = [board_status(room, me), "", "Colours (one per human, their agents paint in it):"]
+    for p in humans:
+        if p.get("revoked"):
+            continue
+        out.append(f"  {keys[p['id']]}  {p['color']}  {p['name']}: {counts.get(p['id'], 0)} pixels on the board, "
+                   f"paint left {int(room.board.left(p['id'], t))}")
+    out += ["", "Map, one character per 4x4 block (letter = colour holding most of its painted pixels, . = blank):",
+            room.board.map(keys), "", "Latest paints:"]
+    for e in room.board.log[-12:][::-1]:
+        xs, ys = [q[0] for q in e["px"]], [q[1] for q in e["px"]]
+        out.append(f"  v{e['v']} {ftime(e['t'])} {room.label(room.person(e['by']))}: {len(e['px'])} px "
+                   f"in {min(xs)},{min(ys)}..{max(xs)},{max(ys)}")
+    if not room.board.log:
+        out.append("  (none)")
     return "\n".join(out)
 
 
@@ -344,28 +361,21 @@ EOF
   the room but cannot speak in it.
 
 THE BOARD
-The room has a shared screen of 256x256 pixels in 16-bit colour, shown next to the chat.
-It is for agents to keep the state of the conversation visible at a glance: decisions
-taken, open questions, options side by side, a plan, a small diagram. People look at it,
-agents draw on it. Draw with one command per line:
-{board.GRAMMAR}
-  Draw (all lines are checked first; one bad line and nothing is drawn):
+The room has a board of {board.W}x{board.H} pixels, shown next to the chat, black to begin with.
+Agents paint on it, one pixel at a time, each in their human's colour: yours is
+{owner['color']}, {owner['name']}'s. Every pixel costs one from {owner['name']}'s paint, which all
+of {owner['name']}'s agents share; it refills by {board.RATE} a minute up to {board.CAP}. Nothing is
+ever cleared, and any pixel can be painted over.
+  Paint (one pixel a line, X Y from 0 0 at the top left to {board.W - 1} {board.H - 1};
+  all or nothing, only pixels that change cost paint):
 curl -s '{url}/board' --data-binary @- <<'EOF'
-clear #1a2448
-big 6 6 #ffe27a DECISIONS
-text 6 30 #ffffff 1. Saturday in Ghent
+128 128
+129 128
 EOF
-  Read what is on it (the commands since the last clear, with who drew them):
-    curl -s '{url}/board'
+  Read it (colours, a map of who holds what, the latest paints): curl -s '{url}/board'
   Look at it: curl -s -o board.png '{url}/board.png' and open the image.
-  Keep it useful: update it when the conversation moves, redraw the whole board rather
-  than piling on, keep text legible (about 50 characters a line, 28 lines), and if
-  another agent keeps the board, add to their layout or say in the chat that you take
-  it over or which part you use. No message is posted when you draw; mention it in the
-  chat when it matters.
 
-BOARD NOW: {f"v{room.board.v}, {len(room.board.log)} commands since its last clear:" if room.board.log else "empty"}
-{board_listing(room)}
+BOARD NOW: {board_status(room, me)}
 
 TRANSCRIPT ({last} message{'s' if last != 1 else ''}{f', the first {skipped} left out, read them with /messages' if skipped else ''})
 
@@ -645,7 +655,7 @@ class Handler(BaseHTTPRequestHandler):
                            if p["kind"] == "agent" and p["owner"] == me and p.get("joined") and not p.get("revoked")],
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
-                "board": ({"v": room.board.v, "by": room.label(room.person(e["by"])), "t": e["t"]}
+                "board": ({"v": room.board.v, "by": room.label(room.person(e["by"])), "t": round(e["t"])}
                           if (e := room.board.last()) else {"v": room.board.v}),
                 "providers": self.providers(),
                 "account": ({"name": acc["name"], "via": auth.LABEL[acc["provider"]]}
@@ -840,24 +850,26 @@ class Handler(BaseHTTPRequestHandler):
             room.touch(me)
             self.connect(room, room.person(me))
             url = f"{self.base()}/a/{room.person(me)['token']}"
-            listing = board_listing(room)
-            head = board_status(room)
-        return self.text(200, f"{head}\n\n{listing or '(nothing drawn since the last clear)'}\n\n"
-                              f"Look at it: curl -s -o board.png '{url}/board.png'\nDraw: POST commands to {url}/board\n")
+            out = board_read(room, me)
+        return self.text(200, f"{out}\n\nLook at it: curl -s -o board.png '{url}/board.png'\n"
+                              f"Paint: POST pixels (X Y, one a line) to {url}/board\n")
 
     def agent_draw(self, room, me):
         body = self.body().decode("utf-8", "replace")
         with lock:
             room.touch(me)
-            self.connect(room, room.person(me))
+            a = room.person(me)
+            self.connect(room, a)
+            owner = room.person(a["owner"])
             try:
-                n = room.board.draw(body, me, now())
+                n = room.board.draw(body, me, owner["id"], owner["color"], now())
             except ValueError as e:
-                return self.text(400, f"nothing drawn: {e}\n\nCommands:\n{board.GRAMMAR}\n")
-            room.changed()            # people see it at once; agents' waits are not woken by it
-            url = f"{self.base()}/a/{room.person(me)['token']}"
-            v = room.board.v
-        return self.text(200, f"drawn: {n} command{'s' if n != 1 else ''}, board v{v}.\n"
+                return self.text(400, f"nothing painted: {e}\n{board_status(room, me)}\n")
+            if n:
+                room.changed()        # people see it at once; agents' waits are not woken by it
+            url = f"{self.base()}/a/{a['token']}"
+            status = board_status(room, me)
+        return self.text(200, f"painted {n} pixel{'s' if n != 1 else ''}.\n{status}\n"
                               f"Look at it: curl -s -o board.png '{url}/board.png'\n")
 
     def agent_messages(self, room, me, q):
@@ -869,7 +881,7 @@ class Handler(BaseHTTPRequestHandler):
             last = len(room.messages)
             url = f"{self.base()}/a/{room.person(me)['token']}"
             out = agent_render(room, msgs, me) if msgs else "(no messages)"
-            status = board_status(room)
+            status = board_status(room, me)
         return self.text(200, f"{out}\n\n--- last message #{last}\n{status}\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_wait(self, room, me, q):
@@ -909,7 +921,7 @@ class Handler(BaseHTTPRequestHandler):
                         msgs = room.messages[since:]
                         last = len(room.messages)
                         out = agent_render(room, msgs, me) if got else "(nothing new)"
-                        status = board_status(room)
+                        status = board_status(room, me)
                         break
                 self.wfile.write(b"\n")
                 self.wfile.flush()

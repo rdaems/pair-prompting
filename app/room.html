@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex">
 <title>PAIR</title>
 <script src="/pixel.js"></script>
+<script src="/floor.js"></script>
 <script src="/auth.js"></script>
 <link rel="stylesheet" href="/room.css">
 </head>
@@ -16,7 +17,7 @@
       <div class="t"><a class="mark" href="/" title="start page">PAIR</a><h1 id="title">…</h1><span id="as"></span></div>
       <button class="btn" id="bInvite" title="invite people"><i class="ico">&#xF0339;</i><span class="lbl"> invite</span></button>
       <button class="btn" id="bAgent" title="bring an agent"><i class="ico">&#xF06A9;</i><span class="lbl"> + agent</span></button>
-      <button class="btn" id="bBoard" title="the board agents draw on">▦<span class="lbl"> board</span><span class="news" id="boardNews" hidden></span></button>
+      <button class="btn" id="bBoard" title="the board agents paint on">▦<span class="lbl"> board</span><span class="news" id="boardNews" hidden></span></button>
     </div>
     <div class="party" id="people"></div>
     <section class="panel" id="pInvite">
@@ -53,7 +54,7 @@
   <button class="newbelow" id="newBelow" hidden></button>
   <aside id="boardPane" hidden>
     <div class="board-head"><b>▦ board</b><span id="boardBy"></span><button class="x" id="boardClose" title="close"><i class="ico">&#xF0156;</i></button></div>
-    <div class="board-screen" id="boardScreen"><img id="boardImg" alt="the board"><p id="boardEmpty">Nothing on the board yet. Agents draw here to keep the state of the conversation in view: decisions, options, a plan.</p></div>
+    <div class="board-screen" id="boardScreen"><img id="boardImg" alt="the board"><p id="boardEmpty">Nothing painted yet.</p></div>
   </aside>
   <canvas id="floor" aria-hidden="true" hidden></canvas>
 </div>
@@ -332,7 +333,7 @@ async function poll(wait) {
   else { newCount += s.messages.filter(isNews).length; showNewBelow(); }
   markRead();
   boardState(s.board);
-  for (const m of s.messages) if (m.from && first === false) floorHop(m.from);
+  for (const m of s.messages) if (m.from && first === false) floorView.hop(m.from);
   first = false;
 }
 let first = true;
@@ -380,7 +381,7 @@ newBelow.onclick = () => { log.scrollTo({ top: log.scrollHeight, behavior: "smoo
 log.addEventListener("scroll", () => { if (stuck) { newCount = 0; showNewBelow(); markRead(); } });
 document.addEventListener("visibilitychange", markRead);
 
-// ---- the board: a 256x256 screen agents draw on; hidden until opened, a dot when it changed
+// ---- the board: a 256x256 screen agents paint on; hidden until opened, a dot when it changed
 let board = { v: 0 }, boardOpen = false;
 const seenKey = "pairBoardSeen:" + token;
 try { boardOpen = localStorage.getItem("pairBoardOpen") === "1" && innerWidth >= 1100; } catch (e) {}
@@ -397,7 +398,7 @@ function showBoard() {
   boardImg.hidden = !boardEmpty.hidden;
   const src = api(`board.png?v=${board.v}`);
   if (!boardImg.hidden && boardImg.getAttribute("src") !== src) boardImg.src = src;
-  boardBy.textContent = board.by ? `drawn by ${board.by} · ${hhmm(board.t)}` : "";
+  boardBy.textContent = board.by ? `painted by ${board.by} · ${hhmm(board.t)}` : "";
   try { localStorage.setItem(seenKey, String(board.v)); } catch (e) {}
   boardNews.hidden = true;
   sizeBoard();
@@ -419,88 +420,15 @@ bBoard.onclick = () => setBoard(!boardOpen);
 boardClose.onclick = () => setBoard(false);
 addEventListener("resize", sizeBoard);
 
-// ---- the floor: everyone present walks about in the empty margin beside the conversation,
-// as busy as they have been lately. Decoration only: it takes no space, and where the
-// margin is too narrow (phones, a narrow window, the board open) it is simply not there.
-function sizeFloor() {
-  const gap = Math.floor(list.getBoundingClientRect().left - log.getBoundingClientRect().left) - 12;
-  floor.hidden = gap < 110;
-  if (!floor.hidden) floor.style.width = gap + "px";
-}
-addEventListener("resize", sizeFloor);
-new ResizeObserver(sizeFloor).observe(log);
-const FW = () => Math.max(60, Math.floor(floor.clientWidth / 2)), FH = 28;
-const walkers = new Map(), sprites = new Map();
-const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-function sprite(p) {
-  const key = p.avatar + p.kind + p.color;
-  if (!sprites.has(key)) { const im = new Image(); im.src = pixelAvatar(p.avatar, p.kind === "agent" ? "agent" : "human", p.color); sprites.set(key, im); }
-  return sprites.get(key);
-}
-function activity(id) {
-  const t = Date.now() / 1000;
-  let a = 0;
-  for (let i = allMsgs.length - 1; i >= 0 && t - allMsgs[i].t < 3600; i--) if (allMsgs[i].from === id) a += Math.exp(-(t - allMsgs[i].t) / 600);
-  return Math.min(a, 3) / 3;          // 0 = quiet for a while, 1 = talking a lot right now
-}
-function walker(p) {
-  if (!walkers.has(p.id)) {
-    let h = 0; for (const ch of p.id + p.name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    walkers.set(p.id, { x: 10 + (h % Math.max(1, FW() - 40)), to: null, dir: h & 1 ? 1 : -1, hop: 0, talk: 0, step: 0 });
-  }
-  return walkers.get(p.id);
-}
-function floorHop(id) {
-  const w = walkers.get(id); if (!w) return;
-  w.hop = 0.6; w.talk = 2.2;
-  if (!still) w.to = Math.max(0, Math.min(FW() - 20, w.x + (Math.random() < 0.5 ? -1 : 1) * (15 + Math.random() * 40)));
-}
-let lastT = 0, acc = 0;
-function floorTick(ts) {
-  requestAnimationFrame(floorTick);
-  if (document.hidden || floor.hidden) return;
-  const dt = Math.min(0.1, (ts - lastT) / 1000 || 0); lastT = ts; acc += dt;
-  if (acc < 1 / 12) return;           // a 16-bit pace: twelve frames a second
-  const step = acc; acc = 0;
-  const W = FW();
-  if (floor.width !== W) { floor.width = W; floor.height = FH; }
-  const ctx = floor.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, W, FH);
-  for (const p of people) {
-    if (p.kind === "agent" && !p.joined) continue;
-    const w = walker(p), a = activity(p.id);
-    if (!still && p.present) {
-      if (w.to === null && Math.random() < step * (0.04 + 0.5 * a)) w.to = Math.max(0, Math.min(W - 20, w.x + (Math.random() - 0.5) * (40 + 160 * a)));
-      if (w.to !== null) {
-        const d = w.to - w.x, v = (10 + 30 * a) * step;
-        if (Math.abs(d) <= v) { w.x = w.to; w.to = null; } else { w.x += Math.sign(d) * v; w.dir = Math.sign(d); w.step += step * 8; }
-      }
-    }
-    w.x = Math.max(0, Math.min(W - 20, w.x));
-    w.hop = Math.max(0, w.hop - step); w.talk = Math.max(0, w.talk - step);
-    const lift = w.hop > 0 ? Math.round(Math.sin((w.hop / 0.6) * Math.PI) * 3) : 0;
-    const x = Math.round(w.x), y = 5 - lift;
-    ctx.globalAlpha = p.present ? 1 : 0.35;
-    // two legs, walking in two frames
-    const walking = w.to !== null, f = walking ? Math.floor(w.step) % 2 : 0;
-    ctx.fillStyle = p.kind === "agent" ? "#5d6280" : "#2a2140";
-    ctx.fillRect(x + 7, y + 20, 2, f ? 2 : 3); ctx.fillRect(x + 11, y + 20, 2, f ? 3 : 2);
-    const im = sprite(p);
-    if (im.complete) {
-      ctx.save();
-      if (w.dir < 0) { ctx.translate(x + 20, 0); ctx.scale(-1, 1); ctx.drawImage(im, 0, y); } else ctx.drawImage(im, x, y);
-      ctx.restore();
-    }
-    if (w.talk > 0) {               // a speech bubble: someone just said something
-      ctx.fillStyle = "#f4f6fb"; ctx.fillRect(x + 13, y - 5, 7, 4); ctx.fillRect(x + 13, y - 1, 1, 1);
-      ctx.fillStyle = "#140f1e"; for (let i = 0; i < 3; i++) if ((Math.floor(w.talk * 4) + i) % 3) ctx.fillRect(x + 14 + i * 2, y - 3, 1, 1);
-    }
-    ctx.globalAlpha = 1;
-  }
-}
-requestAnimationFrame(floorTick);
-sizeFloor();
+// ---- the floor (floor.js): everyone in the room, living in the empty margin beside the
+// conversation. Decoration only: where the margin is too narrow (phones, a narrow
+// window, the board open) it is simply not there.
+const floorView = startFloor(floor, {
+  people: () => people,
+  messages: () => allMsgs,
+  gap: () => Math.floor(list.getBoundingClientRect().left - log.getBoundingClientRect().left) - 12,
+});
+new ResizeObserver(floorView.size).observe(log);
 
 async function loop() {
   try { await poll(false); } catch (e) {}

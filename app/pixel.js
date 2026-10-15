@@ -179,7 +179,7 @@ window.pixelAvatar = (() => {
     else for (let x = 6; x < 10; x++) g(x, 10, C.steel1);
   }
 
-  return (seed, kind, color) => {
+  const avatar = (seed, kind, color) => {
     const key = seed + kind + color;
     if (cache.has(key)) return cache.get(key);
     const cv = canvas(), r = rng(String(seed));
@@ -196,4 +196,8 @@ window.pixelAvatar = (() => {
     cache.set(key, url);
     return url;
   };
+  // the skin a human's face was drawn with (skin is the first thing human() picks), for the hands of a full figure
+  avatar.skin = (seed) => pick(rng(String(seed)), SKIN)[1];
+  avatar.C = C;
+  return avatar;
 })();
