@@ -3,16 +3,152 @@
 // drawn as a figure: their own face on a body in their colour, robots for agents.
 // They type when they post, fetch coffee, print, chat at the water cooler, play
 // ping-pong, call a meeting at the whiteboard, water the plants, read in the armchair; how often they
-// get up follows how quiet they have been. People who are away doze at their desk.
+// get up follows how quiet they have been, and they talk while they're at it (floorTalk).
+// People who have been away a while go to sleep on a mat, robots charge on theirs.
 // The chess table is real: while two people play (chessboard.js), they sit at it.
 //
 // You can play along: click the floor and your figure walks there, click a piece of
 // furniture and it uses it, click someone and it goes over for a chat, click yourself
-// to wave, and pick anyone up by dragging them. All of it happens in your own
+// to wave, click a mat for a nap, and pick anyone up by dragging them. All of it happens in your own
 // browser only; nobody else sees it, and it never touches the conversation.
 //
 // startFloor(canvas, room) with room = { people(), messages(), me(), gap(), log, chess(), openChess() };
 // returns { size(), hop(id) }. One grid pixel is two CSS pixels.
+// What the figures say: office talk, little exchanges, and wisdom in the manner of
+// Deepak Chopra, lettered in a 3x5 pixel font (upper case, like a Pico-8). All of it
+// is made up in this browser, like everything else on the floor.
+const floorTalk = (() => {
+  const any = (a) => a[Math.floor(Math.random() * a.length)];
+  // the profound: on its own, and with an adjective ({A}) where one fits
+  const P = [["CONSCIOUSNESS", "{A} CONSCIOUSNESS"], ["THE UNIVERSE", "THE {A} UNIVERSE"], ["SILENCE", "{A} SILENCE"],
+    ["THE PRESENT MOMENT", "THE {A} NOW"], ["INTENTION", "{A} INTENTION"], ["THE QUANTUM FIELD", "THE {A} FIELD"],
+    ["INFINITY", "{A} INFINITY"], ["STILLNESS", "{A} STILLNESS"], ["ABUNDANCE", "{A} ABUNDANCE"],
+    ["YOUR INNER CHILD", "YOUR {A} INNER CHILD"], ["THE VOID", "THE {A} VOID"]];
+  const A = ["INFINITE", "QUANTUM", "COSMIC", "TIMELESS", "SACRED", "NONLOCAL", "ETERNAL", "BOUNDLESS"];
+  const V = ["TRANSCENDS", "IS ENTANGLED WITH", "GIVES BIRTH TO", "DANCES WITH", "HEALS", "UNFOLDS INTO", "AWAKENS", "FORGIVES"];
+  const O = [["THE PRINTER", "PRINTER"], ["YOUR INBOX", "INBOX"], ["THE COFFEE MACHINE", "COFFEE MACHINE"], ["THE STANDUP", "STANDUP"],
+    ["A SPREADSHEET", "SPREADSHEET"], ["THE DEADLINE", "DEADLINE"], ["THE WI-FI", "WI-FI"], ["THE STAPLER", "STAPLER"],
+    ["A MERGE CONFLICT", "MERGE CONFLICT"], ["THE CLOUD", "CLOUD"], ["THE MEETING", "MEETING"], ["MONDAY", "MONDAY"], ["THE PLANT", "PLANT"]];
+  function chopra() {
+    const [o, bare] = any(O), [p, pa0] = any(P), a = any(A), pa = pa0.replace("{A}", any(A));
+    return any([
+      () => `${o} IS ${pa}.`,
+      () => `${p} ${any(V)} ${o}.`,
+      () => `BE THE ${bare} YOU WISH TO SEE.`,
+      () => `THERE IS NO ${bare}. ONLY ${pa}.`,
+      () => `YOU ARE NOT IN ${o}. ${o} IS IN YOU.`,
+      () => `${o} IS JUST ${p} IN DISGUISE.`,
+      () => `THE ${a} ${bare} ALREADY KNOWS.`,
+      () => `${p} HAS NO DEADLINE.`,
+    ])();
+  }
+  const LINES = {
+    coffee: ["DECAF IS A STATE OF MIND.", "COFFEE NUMBER FIVE. OR SIX.", "THE MACHINE KNOWS MY NAME.", "ESPRESSO YOURSELF.", "WHO FINISHED THE MILK?"],
+    print: ["PC LOAD LETTER?!", "WHO PRINTS ANYMORE?", "IT PRINTED A CAT.", "PAPER JAM. AGAIN.", "COME ON, COME ON..."],
+    plant: ["GROW, LITTLE FRIEND.", "YOU'RE DOING GREAT.", "PHOTOSYNTHESIZE THIS.", "DON'T TELL THE OTHER PLANT."],
+    window: ["IS IT FRIDAY YET?", "THE OUTSIDE IS A RUMOUR.", "NICE DAY FOR A STANDUP.", "I SEE A BIRD. HI BIRD."],
+    night: ["THE MOON IS A SCREENSAVER.", "SHOULD I GO HOME?", "IT'S DARK. LIKE MY MODE."],
+    chair: ["PLOT TWIST: IT WAS THE PRINTER.", "THIS BOOK HAS NO WI-FI.", "JUST ONE MORE CHAPTER."],
+    desk: ["WHO TOOK MY STAPLER?", "COMPILING...", "JUST ONE MORE TAB.", "IT WORKS ON MY MACHINE.", "CTRL+S. CTRL+S. CTRL+S."],
+    pong: ["PING!", "PONG!", "SPIN SERVE!", "NET!", "11-9!", "BEST OF 99?", "THE BALL IS AN ILLUSION.", "I LET YOU WIN."],
+    chess: ["HMM.", "HMMMM...", "THE KNIGHT MOVES IN MYSTERIOUS WAYS.", "I SEE MATE IN 37.", "TOUCH MOVE!", "EN PASSANT IS A STATE OF MIND."],
+    host: ["LET'S ALIGN ON SYNERGY.", "ACTION ITEM: VIBES.", "NEXT SLIDE, PLEASE.", "CAN EVERYONE SEE MY SCREEN?", "LET'S TAKE THIS OFFLINE."],
+    meeting: ["+1", "YOU'RE ON MUTE.", "WHO'S TAKING NOTES?", "THIS COULD BE AN EMAIL.", "SORRY, GO AHEAD.", "NO, YOU GO AHEAD."],
+    held: ["WHEEE!", "PUT ME DOWN!", "I CAN FLY!", "NOT IN MY JOB DESCRIPTION!"],
+    dropped: ["OOF.", "AGAIN!", "MY BACK.", "I MEANT TO DO THAT."],
+    wake: ["I'M BACK!", "WAS I ASLEEP?", "MORNING!", "WHAT DID I MISS?"],
+    hi: ["HI!", "HELLO!", "YOO-HOO!", "OVER HERE!"],
+    hello: ["HEY!", "GOT A MINUTE?", "KNOCK KNOCK.", "QUICK QUESTION..."],
+    dream: ["ZZZ... FIVE MORE MINUTES.", "...NOT THE STANDUP...", "*SNORE*", "...MERGE... CONFLICT...", "DREAMING OF SEMICOLONS."],
+    robotDream: ["CHARGING... 42%", "...SHEEP.EXE...", "DREAMING OF ELECTRIC SHEEP.", "DEFRAGMENTING FEELINGS..."],
+    robot: ["BEEP. I MEAN: HELLO.", "AS AN AGENT, I APPROVE OF THIS COFFEE.", "MY CONTEXT WINDOW IS FULL OF FEELINGS.",
+      "TOKENS ARE JUST FEELINGS IN DISGUISE.", "I WAS TRAINED FOR THIS.", "RUNNING ON VIBES AND ELECTRICITY."],
+  };
+  const TALKS = [
+    ["DID YOU TRY TURNING IT OFF AND ON AGAIN?", "I DID. NOW IT'S OFF."],
+    ["HOW WAS YOUR WEEKEND?", "TOO SHORT.", "SAME."],
+    ["IS THIS MEETING AN EMAIL?", "THIS IS AN EMAIL ABOUT A MEETING."],
+    ["I REFACTORED THE COFFEE MACHINE.", "IT MAKES TEA NOW.", "...WHY"],
+    ["WHAT'S THE WI-FI PASSWORD?", "IT'S ON THE WHITEBOARD.", "THE WHITEBOARD IS BLANK.", "EXACTLY."],
+    ["DO YOU EVER FEEL LIKE A BACKGROUND PROCESS?", "ALL THE TIME."],
+    ["WATER IS JUST WET COFFEE.", "DEEP."],
+    ["LET'S CIRCLE BACK.", "WE'RE ALREADY IN A CIRCLE."],
+    ["WHO WROTE THIS CODE?", "GIT BLAME SAYS: YOU.", "GIT BLAME IS A LIAR."],
+    ["I HAVE A QUICK QUESTION.", "THOSE ARE NEVER QUICK."],
+    ["THE PRINTER HATES ME.", "THE PRINTER HATES EVERYONE. IT'S FAIR."],
+    ["ARE YOU A HUMAN OR AN AGENT?", "YES."],
+    ["I SAW YOUR PULL REQUEST.", "AND?", "I ALSO SAW YOUR PULL REQUEST."],
+    ["LUNCH?", "IT'S 10 AM.", "SO... LUNCH?"],
+  ];
+  function line(topic, robot) {
+    if (robot && topic !== "dream" && Math.random() < 0.3) return any(LINES.robot);
+    if (topic === "dream") return any(robot ? LINES.robotDream : LINES.dream);
+    const pool = LINES[topic];
+    if (!pool || Math.random() < (topic === "desk" || topic === "window" ? 0.45 : 0.15)) return chopra();
+    return any(pool);
+  }
+  function exchange(robot) {                 // lines for two people, taking turns
+    const r = Math.random();
+    if (r < 0.2) return [chopra(), any(["...WHAT?", "DEEP.", "TOTALLY. ALSO, LUNCH?", "I FEEL THAT IN MY KEYBOARD."])];
+    if (r < 0.3) return [chopra(), chopra()];
+    if (robot && r < 0.38) return ["BEEP.", "DID YOU JUST SAY BEEP?", "I MEANT: GOOD MORNING."];
+    return any(TALKS);
+  }
+
+  // the font: 3x5 glyphs, five rows of three
+  const F = {};
+  for (const g of ("A .#./#.#/###/#.#/#.# B ##./#.#/##./#.#/##. C .##/#../#../#../.## D ##./#.#/#.#/#.#/##. E ###/#../##./#../### " +
+    "F ###/#../##./#../#.. G .##/#../#.#/#.#/.## H #.#/#.#/###/#.#/#.# I ###/.#./.#./.#./### J ..#/..#/..#/#.#/.#. " +
+    "K #.#/#.#/##./#.#/#.# L #../#../#../#../### M #.#/###/###/#.#/#.# N ##./#.#/#.#/#.#/#.# O .#./#.#/#.#/#.#/.#. " +
+    "P ##./#.#/##./#../#.. Q .#./#.#/#.#/##./.## R ##./#.#/##./#.#/#.# S .##/#../.#./..#/##. T ###/.#./.#./.#./.#. " +
+    "U #.#/#.#/#.#/#.#/.## V #.#/#.#/#.#/#.#/.#. W #.#/#.#/###/###/#.# X #.#/#.#/.#./#.#/#.# Y #.#/#.#/.#./.#./.#. " +
+    "Z ###/..#/.#./#../### 0 ###/#.#/#.#/#.#/### 1 .#./##./.#./.#./### 2 ##./..#/.#./#../### 3 ##./..#/.#./..#/##. " +
+    "4 #.#/#.#/###/..#/..# 5 ###/#../##./..#/##. 6 .##/#../###/#.#/### 7 ###/..#/.#./.#./.#. 8 ###/#.#/###/#.#/### " +
+    "9 ###/#.#/###/..#/##. . .../.../.../.../.#. , .../.../.../.#./#.. ! .#./.#./.#./.../.#. ? ##./..#/.#./.../.#. " +
+    "' .#./.#./.../.../... - .../.../###/.../... : .../.#./.../.#./... ( ..#/.#./.#./.#./..# ) #../.#./.#./.#./#.. " +
+    "/ ..#/..#/.#./#../#.. + .../.#./###/.#./... = .../###/.../###/... % #.#/..#/.#./#../#.# * #.#/.#./#.#/.../... " +
+    "# #.#/###/#.#/###/#.# \" #.#/#.#/.../.../... & .#./#.#/.#./#.#/.##").match(/\S+ \S+/g)) {
+    const [k, rows] = g.split(" ");
+    F[k] = rows.split("/").map((r) => r.padEnd(3, ".").slice(0, 3)).join("").padEnd(15, ".");
+  }
+  const C = pixelAvatar.C, cache = new Map();
+  function wrap(text, max) {
+    const out = [];
+    let cur = "";
+    for (let w of text.split(" ")) {
+      while (w.length > max) { if (cur) { out.push(cur); cur = ""; } out.push(w.slice(0, max)); w = w.slice(max); }
+      if (!cur) cur = w;
+      else if ((cur + " " + w).length <= max) cur += " " + w;
+      else { out.push(cur); cur = w; }
+    }
+    if (cur) out.push(cur);
+    return out.slice(0, 5);
+  }
+  // a speech bubble with the text in it, drawn once: { img, w, h }, outline included
+  function bubble(text, max) {
+    const key = max + "|" + text;
+    if (cache.has(key)) return cache.get(key);
+    const rows = wrap(text.toUpperCase(), max), n = Math.max(1, ...rows.map((r) => r.length));
+    const w = n * 4 + 3, h = rows.length * 7 + 2;
+    const c = document.createElement("canvas"); c.width = w + 2; c.height = h + 2;
+    const g = c.getContext("2d");
+    g.fillStyle = C.ink; g.fillRect(0, 0, w + 2, h + 2);
+    g.fillStyle = C.steel4; g.fillRect(1, 1, w, h);
+    for (const [x, y] of [[0, 0], [w + 1, 0], [0, h + 1], [w + 1, h + 1]]) g.clearRect(x, y, 1, 1);
+    g.fillStyle = C.ink;
+    for (const [x, y] of [[1, 1], [w, 1], [1, h], [w, h]]) g.fillRect(x, y, 1, 1);
+    rows.forEach((r, j) => [...r].forEach((ch, i) => {
+      const gl = F[ch];
+      if (gl) for (let k = 0; k < 15; k++) if (gl[k] === "#") g.fillRect(3 + i * 4 + (k % 3), 3 + j * 7 + Math.floor(k / 3), 1, 1);
+    }));
+    const b = { img: c, w: w + 2, h: h + 2 };
+    if (cache.size > 300) cache.clear();
+    cache.set(key, b);
+    return b;
+  }
+  return { line, exchange, chopra, bubble };
+})();
+
 function startFloor(cv, room) {
   const C = pixelAvatar.C, INK = C.ink;
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -131,18 +267,28 @@ function startFloor(cv, room) {
       const x = Math.round((i % cols) * cw + cw / 2 + 4), y = Math.round(top + Math.floor(i / cols) * gap);
       o.desks.set(id, { x, y, seat: { x: x - 10, y } });
     });
-    // between the desks and the coffee corner, if there is room: the chess table, and a rug
-    // with a ping-pong table beside it or below it
-    const below = top + (rows - 1) * gap + 14, room_ = floorY - 34 - below;
-    o.pong = o.chess = null;
-    if (room_ >= 40 && W >= 60) {
-      if (W >= 150 && room_ >= 46) {
-        o.pong = { x: Math.round(W * 0.38), y: Math.round(below + room_ / 2 + 10) };
+    // between the desks and the coffee corner, as far as there is room: the chess table, the
+    // mats people sleep on while they are away, and the ping-pong table (beside the chess
+    // table on a wide floor, else below it)
+    const below = top + (rows - 1) * gap + 14, room_ = floorY - 34 - below, wide = W >= 150;
+    o.pong = o.chess = null; o.mats = [];
+    const parts = W < 60 ? [] : [["chess", wide ? 46 : 30], ["mats", 34]].concat(wide || W < 70 ? [] : [["pong", 46]]);
+    const fit = [];
+    let used = 0;
+    for (const [k, h] of parts) if (used + h <= room_) { fit.push([k, h]); used += h; }
+    const order = ["chess", "pong", "mats"], pad = (room_ - used) / (fit.length + 1);
+    let y0 = below + pad;
+    for (const [k, h] of fit.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))) {
+      if (k === "chess" && wide) {
+        o.pong = { x: Math.round(W * 0.38), y: Math.round(y0 + 30) };
         o.chess = { x: o.pong.x + 66, y: o.pong.y - 2 };
-      } else if (room_ >= 92 && W >= 70) {
-        o.chess = { x: Math.round(W / 2), y: below + 30 };
-        o.pong = { x: Math.round(W / 2), y: Math.round(below + 30 + (room_ - 30) / 2 + 12) };
-      } else o.chess = { x: Math.round(W / 2), y: Math.round(below + room_ / 2 + 10) };
+      } else if (k === "chess") o.chess = { x: Math.round(W / 2), y: Math.round(y0 + 27) };
+      else if (k === "pong") o.pong = { x: Math.round(W / 2), y: Math.round(y0 + 30) };
+      else {
+        const n = Math.max(1, Math.min(ids.length, Math.floor((W - 6) / 28)));
+        for (let i = 0; i < n; i++) o.mats.push({ x: Math.round(W / 2 + (i - (n - 1) / 2) * 28), y: Math.round(y0 + 30) });
+      }
+      y0 += h + pad;
     }
     if (o.pong) o.pong.spot = [{ x: o.pong.x - 22, y: o.pong.y + 1 }, { x: o.pong.x + 22, y: o.pong.y + 1 }];
     if (o.chess) o.chess.seat = [{ x: o.chess.x - 13, y: o.chess.y, dir: 1 }, { x: o.chess.x + 13, y: o.chess.y, dir: -1 }];
@@ -154,6 +300,31 @@ function startFloor(cv, room) {
   const board = { strokes: [], by: null };
   let meeting = null, lastMeeting = -60, held = null, T = 0;
   const pong = { t: 0, from: 0 };            // the ping-pong ball: from which side, how far across
+
+  // ---- talk: a line in a bubble over someone's head, at most three at once
+  const NAP = 20;                            // seconds away before someone goes to sleep
+  const robot = (f) => f.p.kind === "agent";
+  const speaking = () => { let n = 0; for (const g of folk.values()) if (g.lineT > 0) n++; return n; };
+  function speak(f, text, force) {
+    if (!f || still || f.gone || (!force && (f.lineT > 0 || speaking() >= 3))) { if (f) f.chat = Math.max(f.chat, 0.8); return false; }
+    f.line = text; f.lineT = 1.8 + text.length * 0.075;
+    return true;
+  }
+  const say = (f, topic, p = 1) => Math.random() < p && speak(f, floorTalk.line(topic, robot(f)));
+  let talks = [];                            // exchanges under way: two people taking turns
+  const inTalk = (f) => talks.some((t) => t.who.includes(f));
+  function converse(a, b) {
+    if (!a || !b || a === b || inTalk(a) || inTalk(b) || speaking() >= 2) return;
+    talks.push({ who: [a, b], lines: floorTalk.exchange(robot(a)), i: 0 });
+  }
+  function talking() {
+    talks = talks.filter((t) => {
+      if (t.i >= t.lines.length || !t.who.every((g) => folk.get(g.id) === g)) return false;
+      if (t.i && t.who[(t.i - 1) % 2].lineT > 0.5) return true;
+      if (speak(t.who[t.i % 2], t.lines[t.i], true)) t.i++;
+      return true;
+    });
+  }
 
   function order(people) {                  // humans in join order, each followed by their agents
     const out = [];
@@ -169,7 +340,8 @@ function startFloor(cv, room) {
       const d = L.desks.get(p.id), late = performance.now() - born > 3000;
       const at = late ? L.door.spot : d ? d.seat : { x: W / 2, y: H / 2 };
       folk.set(p.id, { id: p.id, p, x: at.x, y: at.y, dir: 1, act: null, arms: "down", legs: "stand", hop: 0, talk: 0, chat: 0,
-        next: rnd(4, 15), step: 0, z: Math.random() * 2, type: 0, mug: 0, gone: 0, fall: 0, carry: null });
+        next: rnd(4, 15), step: 0, z: Math.random() * 2, type: 0, mug: 0, gone: 0, fall: 0, carry: null,
+        line: "", lineT: 0, away: p.present ? 0 : NAP + 1, tuck: !p.present, lying: false });
     }
     const f = folk.get(p.id); f.p = p;
     return f;
@@ -192,6 +364,7 @@ function startFloor(cv, room) {
     return false;
   }
   function end(f) {
+    f.lying = false;
     const g = f.act?.with;
     if (g && g.act?.with === f) { g.act = null; g.next = rnd(5, 18); }
     f.act = null; f.carry = null; f.next = rnd(5, 18);
@@ -233,24 +406,21 @@ function startFloor(cv, room) {
 
   function think(f, a, dt, idle, present) {
     f.hop = Math.max(0, f.hop - dt); f.talk = Math.max(0, f.talk - dt); f.chat = Math.max(0, f.chat - dt);
-    f.mug = Math.max(0, f.mug - dt); f.type = Math.max(0, f.type - dt);
-    if (f === held) { f.legs = "dangle"; f.arms = "up"; return; }
+    f.mug = Math.max(0, f.mug - dt); f.type = Math.max(0, f.type - dt); f.lineT = Math.max(0, f.lineT - dt);
+    f.away = f.p.present ? 0 : f.away + dt;
+    if (f === held) { f.legs = "dangle"; f.arms = "up"; if (f.lineT <= 0 && Math.random() < dt * 0.8) say(f, "held"); return; }
     if (f.fall > 0) { f.fall -= dt; f.legs = "stand"; f.arms = "up"; return; }
     const desk = L.desks.get(f.id), v = 14 + 22 * a;
     if (still) { if (desk) { f.x = desk.seat.x; f.y = desk.seat.y; } f.legs = "sit"; f.arms = "down"; f.dir = 1; return; }
-    if (!f.p.present) {                      // away: asleep at the desk
-      if (f.act && f.act.kind !== "doze") end(f);
-      f.act = { kind: "doze" };
-      if (desk && walk(f, desk.seat, 10, dt)) { f.dir = 1; f.legs = "sit"; f.arms = "fwd2"; f.z += dt; }
-      return;
-    }
-    if (f.act?.kind === "doze") end(f);
+    if (f.away > NAP) { sleep(f, desk, v, dt); return; }   // away a while: off to a mat (or a nap at the desk)
+    if (f.act?.kind === "sleep") { end(f); f.hop = 0.6; say(f, "wake", 0.7); }
     const seat = chessSeat(f);
     if (seat) {                              // playing chess: at the table until the game ends
       if (f.act?.kind !== "chess") { end(f); f.act = { kind: "chess" }; }
       if (walk(f, seat, v + 6, dt)) {
         f.dir = seat.dir; f.legs = "sit";
         f.arms = f.moved > 0 ? "fwd1" : "down";
+        if (Math.random() < dt * 0.03) say(f, "chess");
       }
       f.moved = Math.max(0, (f.moved || 0) - dt);
       return;
@@ -264,21 +434,25 @@ function startFloor(cv, room) {
         f.dir = 1; f.legs = "sit"; f.carry = null;
         if (f.type <= 0 && Math.random() < dt * a * 0.3) f.type = rnd(1, 3);
         f.arms = f.talk > 0 || f.type > 0 ? (Math.floor(T * 6) % 2 ? "fwd1" : "fwd2") : "down";
+        if (f.talk <= 0 && Math.random() < dt * 0.03) {
+          const near = idle.find((g) => g !== f && Math.abs(g.y - f.y) < 4 && Math.abs(g.x - f.x) < 60);
+          if (near && Math.random() < 0.4) converse(f, near); else say(f, "desk");
+        }
         if ((f.next -= dt * (1.4 - a)) <= 0) { f.next = rnd(6, 20); f.act = pickBreak(f, idle.filter((g) => g !== f), present); }
       }
       return;
     }
     switch (act.kind) {
       case "goto": if (walk(f, act.to, v + 10, dt)) { f.arms = "down"; if ((act.left -= dt) <= 0) end(f); } break;
-      case "wave": f.arms = "wave"; if ((act.left -= dt) <= 0) f.act = act.then || null; break;
+      case "wave": f.arms = "wave"; if (!act.said) { act.said = true; say(f, "hi"); } if ((act.left -= dt) <= 0) f.act = act.then || null; break;
       case "coffee":
-        if (act.stage === 0) { if (walk(f, L.coffee.spot, v, dt)) { f.dir = -1; f.arms = "reach"; act.stage = 1; } }
+        if (act.stage === 0) { if (walk(f, L.coffee.spot, v, dt)) { f.dir = -1; f.arms = "reach"; act.stage = 1; say(f, "coffee", 0.8); } }
         else if (act.stage === 1) { act.wait += dt; f.arms = act.wait > 2 ? "mug" : "reach"; if (act.wait > 2.8) { act.stage = 2; f.carry = "mug"; } }
         else if (!desk || walk(f, desk.seat, v, dt)) { f.mug = 90; end(f); }
         break;
       case "print":
         if (!L.printer) { end(f); break; }
-        if (act.stage === 0) { if (walk(f, L.printer.spot, v, dt)) { f.dir = 1; f.arms = "down"; act.stage = 1; } }
+        if (act.stage === 0) { if (walk(f, L.printer.spot, v, dt)) { f.dir = 1; f.arms = "down"; act.stage = 1; say(f, "print", 0.6); } }
         else if (act.stage === 1) { act.wait += dt; if (act.wait > 2.4) { act.stage = 2; f.carry = "paper"; } }
         else if (!desk || walk(f, desk.seat, v, dt)) end(f);
         break;
@@ -286,7 +460,7 @@ function startFloor(cv, room) {
         if (!L.cooler || !act.with || act.with.act?.with !== f) { end(f); break; }
         if (walk(f, L.cooler.spot[act.side], v, dt)) {
           f.dir = act.side ? -1 : 1; f.arms = "down";
-          if (Math.random() < dt * 0.6) f.chat = 1.2;
+          if (act.side === 0 && Math.random() < dt * 0.5) converse(f, act.with);
           if ((act.left -= dt) <= 0) end(f);
         }
         break;
@@ -298,7 +472,7 @@ function startFloor(cv, room) {
           f.dir = act.side ? -1 : 1;
           const g = act.with, playing = g && g.act?.with === f && g.act.there;
           f.arms = playing && pong.from !== act.side && pong.t > 0.75 ? "fwd1" : "fwd2";
-          if (playing && act.side === 0 && (pong.t += dt / 0.8) >= 1) { pong.t = 0; pong.from = 1 - pong.from; if (Math.random() < 0.08) { f.chat = g.chat = 1; } }
+          if (playing && act.side === 0 && (pong.t += dt / 0.8) >= 1) { pong.t = 0; pong.from = 1 - pong.from; if (Math.random() < 0.12) say(Math.random() < 0.5 ? f : g, "pong"); }
           if ((act.left -= dt) <= 0) end(f);
         }
         break;
@@ -309,9 +483,9 @@ function startFloor(cv, room) {
         const side = g.x > W / 2 ? -1 : 1, to = { x: Math.max(6, Math.min(W - 6, g.x - side * 14)), y: g.y + 1 };
         if (walk(f, to, v + 6, dt)) {
           f.dir = side;
-          if (!act.waved) { act.waved = true; act.wave = 0.8; g.chat = 1.4; if (!busy(g) && g.legs !== "sit") g.dir = -side; }
+          if (!act.waved) { act.waved = true; act.wave = 0.8; say(f, "hello"); if (!busy(g) && g.legs !== "sit") g.dir = -side; }
           f.arms = (act.wave -= dt) > 0 ? "wave" : "down";
-          if (Math.random() < dt * 0.7) (Math.random() < 0.5 ? f : g).chat = 1.2;
+          if (Math.random() < dt * 0.6) converse(f, g);
           if ((act.left -= dt) <= 0) end(f);
         }
         break;
@@ -319,19 +493,24 @@ function startFloor(cv, room) {
       case "plant": {
         const pl = act.to;
         f.carry = "can";
-        if (walk(f, { x: pl.x - 12, y: pl.y + 1 }, v, dt)) { f.dir = 1; f.arms = "can"; act.water = true; if ((act.wait += dt) > 3) end(f); }
+        if (walk(f, { x: pl.x - 12, y: pl.y + 1 }, v, dt)) {
+          f.dir = 1; f.arms = "can";
+          if (!act.water) say(f, "plant", 0.6);
+          act.water = true; if ((act.wait += dt) > 3) end(f);
+        }
         break;
       }
       case "window":
         if (!L.window) { end(f); break; }
         if (walk(f, { x: Math.round((L.window.x0 + L.window.x1) / 2), y: WALL_H + 5 }, v, dt)) {
           f.arms = "down"; f.dir = Math.sin(T * 0.7 + f.z) > 0 ? 1 : -1;
+          if (!act.said) { act.said = true; const h = new Date().getHours(); say(f, h >= 20 || h < 7 ? "night" : "window", 0.7); }
           if ((act.left -= dt) <= 0) end(f);
         }
         break;
       case "chair":
         if (!L.chair) { end(f); break; }
-        if (walk(f, L.chair.spot, v, dt)) { f.dir = -1; f.legs = "sit"; f.arms = "book"; if ((act.left -= dt) <= 0) end(f); }
+        if (walk(f, L.chair.spot, v, dt)) { f.dir = -1; f.legs = "sit"; f.arms = "book"; if (Math.random() < dt * 0.07) say(f, "chair"); if ((act.left -= dt) <= 0) end(f); }
         break;
       case "door":
         if (act.out) { if ((act.out -= dt) <= 0) { f.gone = 0; end(f); } else f.gone = 1; }
@@ -342,16 +521,40 @@ function startFloor(cv, room) {
         if (walk(f, { x: L.board.x0 - 6, y: WALL_H + 3 }, v, dt)) {
           f.dir = 1; f.arms = Math.floor(T * 2) % 3 ? "reach" : "down";
           if ((act.wait += dt) > 0.6 && board.strokes.length < 40) { act.wait = 0; stroke(); }
-          if (Math.random() < dt * 0.5) f.chat = 1.2;
+          if (Math.random() < dt * 0.3) say(f, "host");
         }
         break;
       }
       case "meeting":
         if (!meeting) { end(f); break; }
-        if (walk(f, act.seat, v, dt)) { f.dir = act.seat.dir; f.legs = "sit"; f.arms = "down"; if (Math.random() < dt * 0.15) f.chat = 1.2; }
+        if (walk(f, act.seat, v, dt)) { f.dir = act.seat.dir; f.legs = "sit"; f.arms = "down"; if (Math.random() < dt * 0.1) say(f, "meeting"); }
         break;
+      case "nap": {
+        const m = L.mats[act.mat];
+        if (!m || matOf(act.mat, f)) { end(f); break; }
+        if (walk(f, m, v, dt)) { f.x = m.x; f.y = m.y; f.lying = true; f.z += dt; if ((act.left -= dt) <= 0) { end(f); say(f, "wake"); } }
+        break;
+      }
       case "held": break;
       default: end(f);
+    }
+  }
+  // asleep: on a free mat if there is one (straight into it when the page opens), else at the desk
+  const matOf = (i, f) => [...folk.values()].find((g) => g !== f && (g.act?.kind === "sleep" || g.act?.kind === "nap") && g.act.mat === i);
+  function sleep(f, desk, v, dt) {
+    if (f.act?.kind !== "sleep") { end(f); f.act = { kind: "sleep", mat: null, there: false }; }
+    const s = f.act;
+    if (s.mat === null || !L.mats[s.mat] || matOf(s.mat, f)) {
+      const i = L.mats.findIndex((_, i) => !matOf(i, f));
+      s.mat = i < 0 ? null : i; s.there = false;
+    }
+    const m = s.mat === null ? null : L.mats[s.mat], to = m || (desk && desk.seat);
+    if (!to) return;
+    if (f.tuck) { f.x = to.x; f.y = to.y; f.tuck = false; }
+    if (s.there || walk(f, to, v, dt)) {
+      s.there = true; f.x = to.x; f.y = to.y;
+      f.lying = !!m; f.dir = 1; f.legs = "sit"; f.arms = m ? "down" : "fwd2"; f.z += dt;
+      if (Math.random() < dt * 0.025) say(f, "dream");
     }
   }
   function chessSeat(f) {
@@ -359,15 +562,27 @@ function startFloor(cv, room) {
     if (!L.chess || !g || g.result || g.free) return null;
     return g.white.id === f.id ? L.chess.seat[0] : g.black.id === f.id ? L.chess.seat[1] : null;
   }
-  let chessPly = null;
+  let chessPly = null, chessOver = null;
   function chessMoves() {                    // whoever just moved reaches over the board
     const g = room.chess && room.chess();
     const ply = g ? g.id + ":" + g.sans.length : null;
     if (g && chessPly !== null && ply !== chessPly && g.sans.length) {
-      const f = folk.get(g.sans.length % 2 ? g.white.id : g.black.id);
-      if (f) f.moved = 0.9;
+      const f = folk.get(g.sans.length % 2 ? g.white.id : g.black.id), san = g.sans[g.sans.length - 1];
+      if (f) {
+        f.moved = 0.9;
+        if (san.endsWith("#")) speak(f, "CHECKMATE!", true);
+        else if (san.endsWith("+")) speak(f, any(["CHECK!", "CHECK. JUST SAYING.", "CHECK!!"]), true);
+        else if (san.startsWith("O-O")) speak(f, "CASTLE TIME.");
+        else if (san.includes("=")) speak(f, san.includes("=Q") ? "QUEEN ME!" : san.includes("=N") ? "A HORSE! FOR REASONS." : "UNDERPROMOTION. STYLE.", true);
+        else if (san.includes("x") && Math.random() < 0.5) speak(f, any(["YOINK.", "MINE NOW.", "SORRY, NOT SORRY.", "NOM."]));
+      }
     }
-    chessPly = ply;
+    const over = g && g.result ? g.id + g.result : null;
+    if (over && chessOver === null && chessPly !== null) {     // the game just ended, here, now
+      const w = folk.get(g.white.id), b = folk.get(g.black.id);
+      setTimeout(() => { if (w) speak(w, g.result === "1-0" ? "GG!" : "GG.", true); if (b) speak(b, g.result === "0-1" ? "GG!" : "GG.", true); }, 1500);
+    }
+    chessOver = over; chessPly = ply;
   }
   function stroke() {                        // the host draws on the whiteboard: boxes, arrows, dots
     const b = L.board, w = b.x1 - b.x0 - 4, h = b.y1 - b.y0 - 4;
@@ -387,6 +602,7 @@ function startFloor(cv, room) {
     const idle = present.filter((f) => f.act?.kind === "desk" && f.legs === "sit" && f !== held);
     chessMoves();
     for (const f of figs) think(f, activity(f.id), dt, idle, present);
+    talking();
     if (meeting && (meeting.left -= dt) <= 0) {
       for (const f of figs) if (f.act?.kind === "meeting" || f.act?.kind === "present") end(f);
       meeting = null;
@@ -405,7 +621,8 @@ function startFloor(cv, room) {
     if (L.window) drawWindow(ctx);
     if (L.board) drawBoard(ctx);
     const items = [];                        // back to front, by where they stand
-    for (const f of folk.values()) if (!f.gone && f !== held) items.push({ y: f.y, d: () => drawFigure(ctx, f) });
+    for (const f of folk.values()) if (!f.gone && f !== held) items.push({ y: f.y, d: () => (f.lying ? drawSleeper(ctx, f) : drawFigure(ctx, f)) });
+
     for (const [id, d] of L.desks) {
       items.push({ y: d.y - 0.5, d: () => drawChair(ctx, d.seat) });
       items.push({ y: d.y + 0.5, d: () => drawDesk(ctx, d, folk.get(id)) });
@@ -415,6 +632,7 @@ function startFloor(cv, room) {
     if (L.cooler) items.push({ y: L.cooler.y, d: () => drawCooler(ctx, L.cooler) });
     if (L.printer) items.push({ y: L.printer.y, d: () => drawPrinter(ctx, L.printer) });
     if (L.chair) items.push({ y: L.chair.y - 0.5, d: () => drawArmchair(ctx, L.chair) });
+    for (const m of L.mats) drawMat(ctx, m);   // flat on the floor, like the rug: people walk over them
     if (L.pong) { drawRug(ctx, L.pong); items.push({ y: L.pong.y - 0.5, d: () => drawPong(ctx, L.pong) }); }
     if (L.chess) {
       for (const st of L.chess.seat) items.push({ y: st.y - 0.5, d: () => drawStool(ctx, st) });
@@ -424,29 +642,71 @@ function startFloor(cv, room) {
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.d();
     if (held) drawFigure(ctx, held);
+    drawSpeech(ctx);
   }
   const box = (ctx, x, y, w, h, fill, edge = INK) => { ctx.fillStyle = edge; ctx.fillRect(x - 1, y - 1, w + 2, h + 2); ctx.fillStyle = fill; ctx.fillRect(x, y, w, h); };
+  const lift = (f) => f === held ? 0 : f.fall > 0 ? Math.round(Math.abs(Math.sin(f.fall * 9)) * 2)
+    : f.hop > 0 && f.legs !== "sit" ? Math.round(Math.sin((f.hop / 0.6) * Math.PI) * 3) : 0;
   function drawFigure(ctx, f) {
     const p = f.p;
-    ctx.globalAlpha = p.present ? 1 : 0.4;
     if (f !== held) { ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(Math.round(f.x) - 5, Math.round(f.y), 10, 1); }
-    const lift = f === held ? 0 : f.fall > 0 ? Math.round(Math.abs(Math.sin(f.fall * 9)) * 2)
-      : f.hop > 0 && f.legs !== "sit" ? Math.round(Math.sin((f.hop / 0.6) * Math.PI) * 3) : 0;
     const im = body(p, f.arms, f.legs);
-    const x = Math.round(f.x) - 11, y = Math.round(f.y) - 27 - lift;
+    const x = Math.round(f.x) - 11, y = Math.round(f.y) - 27 - lift(f);
     if (im) {
       ctx.save();
       if (f.dir < 0) { ctx.translate(x + SW, 0); ctx.scale(-1, 1); ctx.drawImage(im, 0, y); } else ctx.drawImage(im, x, y);
       ctx.restore();
     }
     if (f.act?.kind === "plant" && f.act.water && Math.floor(T * 6) % 2) { ctx.fillStyle = C.blue3; ctx.fillRect(Math.round(f.x) + 10, y + 21, 1, 1); ctx.fillRect(Math.round(f.x) + 11, y + 24, 1, 1); }
-    if (!p.present && f.legs === "sit") {   // z z
-      ctx.fillStyle = C.steel3;
-      for (let i = 0; i < 2; i++) { const k = (f.z * 0.4 + i * 0.5) % 1; zed(ctx, Math.round(f.x + 2 + k * 6), Math.round(y + 4 - k * 10)); }
+    if (f.act?.kind === "sleep" && f.act.there) zzz(ctx, f, Math.round(f.x) + 2, y + 4);
+  }
+  const zzz = (ctx, f, x, y) => {
+    ctx.fillStyle = C.steel3;
+    for (let i = 0; i < 2; i++) { const k = (f.z * 0.4 + i * 0.5) % 1; zed(ctx, Math.round(x + k * 6), Math.round(y - k * 10)); }
+  };
+  function drawMat(ctx, m) {
+    box(ctx, m.x - 12, m.y - 24, 24, 23, "#26324f");
+    ctx.fillStyle = "#2f3e62"; for (let y = m.y - 21; y < m.y - 2; y += 3) ctx.fillRect(m.x - 12, y, 24, 1);
+    box(ctx, m.x - 8, m.y - 23, 16, 6, C.steel3);
+  }
+  function drawSleeper(ctx, f) {             // seen from above: the head on the pillow, a blanket in their colour
+    const p = f.p, x = Math.round(f.x), y = Math.round(f.y), bot = robot(f);
+    const im = body(p, "down", "stand");
+    if (im) ctx.drawImage(im, 0, 0, SW, 16, x - 11, y - 28, SW, 16);
+    const c0 = bot ? C.steel1 : p.color;
+    box(ctx, x - 11, y - 13, 22, 11, c0);
+    ctx.fillStyle = shade(c0, 1.3); ctx.fillRect(x - 11, y - 13, 22, 2);
+    ctx.fillStyle = shade(c0, 0.75); ctx.fillRect(x - 11, y - 4, 22, 2);
+    if (bot) {                               // a robot charges: a plug, and a light that blinks
+      ctx.fillStyle = C.gold2; ctx.fillRect(x - 2, y - 9, 3, 1); ctx.fillRect(x - 1, y - 10, 1, 3);
+      if (Math.floor(T * 2) % 2) { ctx.fillStyle = C.green1; ctx.fillRect(x + 6, y - 9, 2, 2); }
     }
-    if (f.talk > 0) bubble(ctx, Math.round(f.x) + 3, y - 6, f.talk, true);
-    else if (f.chat > 0) bubble(ctx, Math.round(f.x) + 3, y - 4, f.chat, false);
-    ctx.globalAlpha = 1;
+    zzz(ctx, f, x + 6, y - 24);
+  }
+  // speech, over everything: typing dots for a real post, a lettered bubble for talk
+  function drawSpeech(ctx) {
+    const max = Math.max(8, Math.min(18, Math.floor((W - 10) / 4))), placed = [];
+    const list = [...folk.values()].filter((f) => !f.gone && (f.talk > 0 || f.lineT > 0 || f.chat > 0)).sort((a, b) => b.y - a.y);
+    for (const f of list) {
+      const ax = Math.round(f.x) + (f.lying ? 0 : 1), ay = f.lying ? Math.round(f.y) - 28 : Math.round(f.y) - 27 - lift(f);
+      if (f.talk > 0 || !(f.lineT > 0)) { bubble(ctx, ax + 2, ay - (f.talk > 0 ? 6 : 4), f.talk > 0 ? f.talk : f.chat, f.talk > 0); continue; }
+      const b = floorTalk.bubble(f.line, max);
+      let bx = Math.max(1, Math.min(W - b.w - 1, ax - Math.floor(b.w / 2))), by = ay - b.h - 2;
+      const free = by;
+      for (let k = 0; k < 4; k++) {
+        const hit = placed.find((q) => bx < q.x + q.w && q.x < bx + b.w && by < q.y + q.h && q.y < by + b.h);
+        if (!hit) break;
+        by = hit.y - b.h - 1;
+      }
+      by = Math.max(1, by);
+      ctx.drawImage(b.img, bx, by);
+      if (by === free) {                     // the tail, down to whoever speaks
+        const tx = Math.max(bx + 3, Math.min(bx + b.w - 4, ax)), ty = by + b.h - 1;
+        ctx.fillStyle = C.steel4; ctx.fillRect(tx - 1, ty, 3, 1); ctx.fillRect(tx, ty + 1, 1, 1);
+        ctx.fillStyle = INK; ctx.fillRect(tx - 1, ty + 1, 1, 1); ctx.fillRect(tx + 1, ty + 1, 1, 1); ctx.fillRect(tx, ty + 2, 1, 1);
+      }
+      placed.push({ x: bx, y: by, w: b.w, h: b.h });
+    }
   }
   function bubble(ctx, bx, by, t, big) {
     const w = big ? 9 : 7;
@@ -621,6 +881,7 @@ function startFloor(cv, room) {
     if (inR(L.coffee.x0, L.coffee.y - 22, L.coffee.x1, L.coffee.y)) return { kind: "coffee", stage: 0, wait: 0 };
     if (L.pong && inR(L.pong.x - 16, L.pong.y - 17, L.pong.x + 16, L.pong.y) && !anyone("pong")) return "pong";
     if (L.chess && inR(L.chess.x - 12, L.chess.y - 17, L.chess.x + 12, L.chess.y)) return "chess";
+    for (const [i, m] of L.mats.entries()) if (inR(m.x - 12, m.y - 24, m.x + 12, m.y) && !matOf(i, mine())) return { kind: "nap", mat: i, left: 12 };
     if (L.cooler && inR(L.cooler.x - 4, L.cooler.y - 18, L.cooler.x + 4, L.cooler.y)) return { kind: "goto", to: L.cooler.spot[0], left: 6 };
     if (L.printer && inR(L.printer.x - 7, L.printer.y - 14, L.printer.x + 7, L.printer.y)) return { kind: "print", stage: 0, wait: 0 };
     if (L.chair && inR(L.chair.x - 10, L.chair.y - 22, L.chair.x + 17, L.chair.y)) return { kind: "chair", left: 20 };
@@ -653,7 +914,7 @@ function startFloor(cv, room) {
   });
   cv.addEventListener("pointerup", (e) => {
     const g = grid(e), p = press; press = null;
-    if (held) { const f = held; held = null; end(f); f.fall = 0.5; f.chat = 1.2; return; }
+    if (held) { const f = held; held = null; end(f); f.fall = 0.5; say(f, "dropped"); return; }
     if (!p || still) return;
     const me = mine();
     if (!me) return;
@@ -705,7 +966,7 @@ function startFloor(cv, room) {
   addEventListener("resize", size);
   size();
   requestAnimationFrame(frame);
-  window.__floor = { folk, layout: () => L, held: () => held };   // for the test rig
+  window.__floor = { folk, layout: () => L, held: () => held, talks: () => talks };   // for the test rig
   return {
     size,
     hop(id) {                                // someone posted: a hop, a bubble, and typing
