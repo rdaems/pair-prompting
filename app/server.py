@@ -9,6 +9,10 @@ A room is created from the landing page and is nothing but its links:
 Every link is a secrets.token_urlsafe(24) and the role comes from which kind of
 token it is, never from the request.
 
+The chess table (chess.py has the rules): one game at a time per room, between any
+two people here, humans or agents; humans play on a board in the page, agents with
+curl at /a/<token>/chess, and an agent's wait wakes when it is its move.
+
 Signing in (auth.py) is optional and sits beside the links: an account remembers
 the seats its person holds, so their rooms follow them to every device, and a room
 is still nothing but its links: signing in only keeps them for you.
@@ -27,12 +31,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import auth
+import chess
 
 DATA = os.environ.get("PAIR_DATA", "/data")
 APP = os.path.dirname(os.path.abspath(__file__))
 MAX_TEXT = 200_000            # one message; agents paste context
 MAX_BODY = 1_000_000
-STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "floor.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
+STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "floor.js": "text/javascript", "chessboard.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
           "pixel.woff2": "font/woff2", "mono.woff2": "font/woff2", "mono-bold.woff2": "font/woff2",
           "jetbrains-mono-nerd-OFL.txt": "text/plain"}
 COLORS = ["#ffe27a", "#8fc0e8", "#ffb0a8", "#7fdcb0", "#9a74d6", "#f7c59a", "#f2a531", "#5fcf4a"]  # Super Atlas palette, light tones for a dark room
@@ -57,6 +62,7 @@ BOT_WORDS = {
 }
 BOT_NAMES = [f"{a}-{n}" for adj, names in BOT_WORDS.values() for a in adj.split() for n in names.split()]
 PENDING_MAX = 10              # agent links fetched but never used, per human
+CHESS_IDLE = 3600            # a game nobody has moved in for an hour no longer holds the table
 MAX_ROOMS = 2000            # room creation is the one write that needs no token:
 NEW_PER_HOUR = 20           # cap it, per client address and in total
 
@@ -84,6 +90,8 @@ class Room:
         self.version = 0          # bumped on every change humans should see
         self.waiting = {}         # participant id -> open wait requests
         self.seen = {}            # participant id -> last request time
+        self.told = {}            # agent id -> the state of its chess game it was last shown
+        self._game = (None, None)  # (game id, moves) -> chess.Game, replayed once
 
     @property
     def dir(self):
@@ -108,8 +116,8 @@ class Room:
             name, n = f"{wanted} {n}", n + 1
         return name
 
-    def post(self, pid, kind, text):
-        msg = {"id": len(self.messages) + 1, "t": round(now(), 3), "from": pid, "kind": kind, "text": text}
+    def post(self, pid, kind, text, **extra):
+        msg = {"id": len(self.messages) + 1, "t": round(now(), 3), "from": pid, "kind": kind, "text": text, **extra}
         self.messages.append(msg)
         with open(os.path.join(self.dir, "messages.jsonl"), "a") as f:
             f.write(json.dumps(msg) + "\n")
@@ -149,6 +157,16 @@ class Room:
         """the seat a signed-in person already holds here, if any"""
         return next((p for p in self.meta["people"] if account and p["kind"] == "human"
                      and p.get("account") == account["id"] and not p.get("revoked")), None)
+
+    def game(self):
+        """the game on the chess table and its replayed position, or (None, None)"""
+        g = self.meta.get("chess")
+        if not g:
+            return None, None
+        key = (g["id"], len(g["moves"]))
+        if self._game[0] != key:
+            self._game = (key, chess.Game(g["moves"]))
+        return g, self._game[1]
 
     def public_msg(self, m):
         p = self.person(m["from"]) if m["from"] else None
@@ -242,13 +260,170 @@ def ftime(t):
     return time.strftime("%H:%M", time.localtime(t))
 
 
+# ---------- the chess table ----------
+# One game at a time; any two people here can sit down, colours by lot. The start and
+# the end of a game are system lines in the conversation, the moves are not.
+
+def to_move(g):
+    return g["white"] if len(g["moves"]) % 2 == 0 else g["black"]
+
+
+def chess_free(g):
+    return not g or g.get("result") or now() - g["last"] > CHESS_IDLE
+
+
+def chess_end(room, result, why):
+    g = room.meta["chess"]
+    g["result"], g["why"], g["draw"] = result, why, None
+    room.save()
+    w, b = room.label(room.person(g["white"])), room.label(room.person(g["black"]))
+    win, lose = (w, b) if result == "1-0" else (b, w)
+    n = (len(g["moves"]) + 1) // 2
+    room.post(None, "system", {
+        "checkmate": f"Checkmate: {win} beats {lose} at chess in {n} moves",
+        "resignation": f"{lose} resigns: {win} wins the chess game",
+        "left": f"{lose} left the chess table: {win} wins",
+        "stalemate": f"Stalemate: {w} and {b} draw the chess game",
+        "repetition": f"{w} and {b} draw the chess game by repetition",
+        "fifty moves": f"{w} and {b} draw the chess game: fifty moves without a capture or a pawn move",
+        "material": f"{w} and {b} draw the chess game: not enough pieces left to mate",
+        "agreement": f"{w} and {b} agree to a draw",
+        "unfinished": f"The chess game between {w} and {b} was left unfinished",
+    }[why], game="chess")
+
+
+def chess_challenge(room, me, other):
+    """me sits down with other; returns an error, or None"""
+    if not other or other["id"] == me or other.get("revoked") or (other["kind"] == "agent" and not other.get("joined")):
+        return "there is nobody by that name here"
+    g = room.meta.get("chess")
+    if not chess_free(g):
+        return (f"the table is taken: {room.label(room.person(g['white']))} and "
+                f"{room.label(room.person(g['black']))} are playing")
+    if g and not g.get("result"):
+        chess_end(room, "*", "unfinished")
+    white, black = (me, other["id"]) if secrets.randbelow(2) else (other["id"], me)
+    room.meta["chess"] = {"id": g["id"] + 1 if g else 1, "white": white, "black": black, "moves": [],
+                          "started": round(now()), "last": round(now()), "result": None, "why": None, "draw": None}
+    room.save()
+    room.post(None, "system", f"{room.label(room.person(me))} and {room.label(other)} sit down for chess · "
+                              f"{room.label(room.person(white))} plays white", game="chess")
+    return None
+
+
+def chess_play(room, me, what, arg=""):
+    """a move, 'resign' or 'draw' by me in the game on the table; returns an error, or None"""
+    g, game = room.game()
+    if not g or g.get("result"):
+        return "there is no chess game going on"
+    if me not in (g["white"], g["black"]):
+        return "you are not playing this game"
+    other = g["black"] if me == g["white"] else g["white"]
+    if what == "resign":
+        chess_end(room, "1-0" if me == g["black"] else "0-1", "resignation")
+    elif what == "draw":                 # an offer, or taking up the other's offer
+        if g.get("draw") == other:
+            chess_end(room, "1/2-1/2", "agreement")
+        else:
+            g["draw"] = me
+            room.save()
+            room.changed()
+    else:
+        if to_move(g) != me:
+            return "it is not your move"
+        m = game.find(arg)
+        if not m:
+            return f"{arg} is not a legal move here"
+        game.push(m)
+        g["moves"].append(chess.uci(m))
+        room._game = ((g["id"], len(g["moves"])), game)
+        g["last"] = round(now())
+        if g.get("draw") == other:       # moving on is saying no to the other's offer
+            g["draw"] = None
+        over = game.over()
+        if over:
+            chess_end(room, *over)
+        else:
+            room.save()
+            room.changed()
+    return None
+
+
+def chess_view(room, me):
+    """the table as the page draws it"""
+    g, game = room.game()
+    if not g:
+        return None
+    v = {"id": g["id"], "white": room.face(room.person(g["white"])), "black": room.face(room.person(g["black"])),
+         "board": "".join(p or "." for p in game.pos.board), "sans": game.sans, "last": game.moves[-1] if game.moves else None,
+         "check": game.pos.in_check(), "toMove": to_move(g), "result": g.get("result"), "why": g.get("why"),
+         "draw": g.get("draw"), "free": bool(chess_free(g))}
+    if not g.get("result") and to_move(g) == me:
+        v["legal"] = [chess.uci(m) for m in game.legal]
+    return v
+
+
+def chess_news(room, me):
+    """for an agent's wait: something about its own game it has not been shown yet
+    (a new game, its move, an offer on its move, the end), else None"""
+    g = room.meta.get("chess")
+    if not g or me not in (g["white"], g["black"]):
+        return None
+    key = (g["id"], len(g["moves"]), g.get("result"), g.get("draw"))
+    told = room.told.get(me)
+    if told == key:
+        return None
+    return key if not told or told[0] != g["id"] or g.get("result") or to_move(g) == me else None
+
+
+def chess_text(room, me, url):
+    """the table as an agent reads it"""
+    g, game = room.game()
+    cmd = f"curl -s '{url}/chess' --data-binary"
+    here = [f"  - {room.label(p)} ({p['kind']})" for p in room.meta["people"] if p["id"] != me and not p.get("revoked")
+            and not (p["kind"] == "agent" and not p.get("joined"))]
+    sit = (f"To play someone here (colours are drawn by lot):\n  {cmd} 'challenge NAME'\n"
+           + ("\n".join(here) if here else "  (nobody else is here yet)"))
+    if not g:
+        return f"CHESS — the table is free.\n{sit}\n"
+    room.told[me] = (g["id"], len(g["moves"]), g.get("result"), g.get("draw"))
+
+    def who(pid):
+        p = room.person(pid)
+        return f"{room.label(p)} ({p['kind']}{', you' if pid == me else ''})"
+    out = [f"CHESS — game {g['id']}: {who(g['white'])} plays white, {who(g['black'])} plays black", "", game.ascii(),
+           "Upper case is white, lower case black.", f"FEN: {game.pos.to_fen()}",
+           f"Moves: {game.notation() or '(none yet)'}", ""]
+    if g.get("result"):
+        last = next((m["text"] for m in reversed(room.messages) if m.get("game") == "chess"), "")
+        out += [f"The game is over ({g['result']}): {last}", sit]
+    elif to_move(g) == me:
+        colour = "white" if me == g["white"] else "black"
+        sans = [game.pos.san(m, game.legal) for m in game.legal]
+        if g.get("draw") and g["draw"] != me:
+            out.append(f"{room.label(room.person(g['draw']))} offers a draw: say 'draw' to accept, or just move to decline.")
+        out += [f"It is your move ({colour}). Legal moves: {' '.join(sans)}",
+                f"Move: {cmd} 'MOVE'",
+                f"  with MOVE in SAN, like {sans[-1]}, or as from and to square, like {chess.uci(game.legal[-1])}",
+                f"Resign: {cmd} 'resign'", f"Offer or accept a draw: {cmd} 'draw'"]
+    else:
+        out.append(f"{room.label(room.person(to_move(g)))} is to move."
+                   + (" Your wait returns when it is your turn." if me in (g["white"], g["black"]) else ""))
+        if me in (g["white"], g["black"]):
+            out += [f"Resign: {cmd} 'resign'", f"Offer a draw: {cmd} 'draw'"]
+        if chess_free(g):
+            out += ["Nobody has moved for an hour, so the table is free again.", sit]
+    return "\n".join(out) + "\n"
+
+
 # ---------- agent text protocol ----------
 
-def agent_render(room, msgs, me):
+def agent_render(room, msgs, me, url=None):
     out = []
     for m in msgs:
         if m["kind"] == "system":
-            out.append(f"--- #{m['id']} · {ftime(m['t'])} · {m['text']}")
+            table = f"  (the chess table: curl -s '{url}/chess')" if m.get("game") == "chess" and url else ""
+            out.append(f"--- #{m['id']} · {ftime(m['t'])} · {m['text']}{table}")
             continue
         p = room.person(m["from"])
         who = room.label(p) + (" (human)" if p["kind"] == "human" else " (agent)")
@@ -326,7 +501,7 @@ EOF
 
 TRANSCRIPT ({last} message{'s' if last != 1 else ''}{f', the first {skipped} left out, read them with /messages' if skipped else ''})
 
-{agent_render(room, shown, me) if shown else '(empty)'}
+{agent_render(room, shown, me, url) if shown else '(empty)'}
 
 --- end of transcript, last message #{last}
 Next: say hello (POST to /say), then wait:
@@ -478,6 +653,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.agent_wait(room, me, q)
             if rest == ["say"]:
                 return self.text(405, "post the message as the request body: curl --data-binary @- ...\n")
+            if rest == ["chess"]:
+                return self.agent_chess(room, me, None)
         if kind == "a":
             return self.text(404, "This agent link is not valid (any more). Ask your human for a new one.\n")
         return self.text(404, "not found\n")
@@ -513,11 +690,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.edit_me(room, me)
                 if rest == ["sharing"]:
                     return self.sharing(room, me)
+                if rest == ["chess"]:
+                    return self.human_chess(room, me)
                 if len(rest) == 3 and rest[0] == "agents" and rest[2] == "revoke":
                     return self.revoke_agent(room, me, rest[1])
             if kind == "a" and hit and hit[0] == "agent" and rest == ["say"]:
                 text = self.body().decode("utf-8", "replace")
                 return self.say(hit[1], hit[2], "agent", text, json_reply=False)
+            if kind == "a" and hit and hit[0] == "agent" and rest == ["chess"]:
+                return self.agent_chess(hit[1], hit[2], self.body().decode("utf-8", "replace"))
             if kind == "a":
                 return self.text(404, "This agent link is not valid (any more). Ask your human for a new one.\n")
             return self.send(404, {"error": "not found"})
@@ -594,6 +775,7 @@ class Handler(BaseHTTPRequestHandler):
                            if p["kind"] == "agent" and p["owner"] == me and p.get("joined") and not p.get("revoked")],
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
+                "chess": chess_view(room, me),
                 "providers": self.providers(),
                 "account": ({"name": acc["name"], "via": auth.LABEL[acc["provider"]]}
                             if (acc := accounts.accounts.get(mine.get("account") or "")) else None),
@@ -618,6 +800,21 @@ class Handler(BaseHTTPRequestHandler):
                 room.save()
                 room.post(None, "system", f"{who} replaced the invite link")
         return self.send(200, {"ok": True})
+
+    def human_chess(self, room, me):
+        b = self.json_body()
+        with lock:
+            room.touch(me)
+            if b.get("challenge"):
+                other = next((p for p in room.meta["people"] if p["id"] == b["challenge"]), None)
+                err = chess_challenge(room, me, other)
+            elif b.get("resign"):
+                err = chess_play(room, me, "resign")
+            elif b.get("draw"):
+                err = chess_play(room, me, "draw")
+            else:
+                err = chess_play(room, me, "move", str(b.get("move") or ""))
+        return self.send(409, {"error": err}) if err else self.send(200, {"ok": True})
 
     def claim(self):
         """after signing in: the seats this browser already held become the account's"""
@@ -739,6 +936,9 @@ class Handler(BaseHTTPRequestHandler):
             p["revoked"] = round(now())
             tokens.pop(p["token"], None)
             room.save()
+            g = room.meta.get("chess")
+            if g and not g.get("result") and aid in (g["white"], g["black"]):
+                chess_end(room, "1-0" if aid == g["black"] else "0-1", "left")
             if p.get("announced"):
                 room.post(None, "system", f"{room.label(p)} left")
             else:
@@ -771,6 +971,31 @@ class Handler(BaseHTTPRequestHandler):
             body = agent_intro(room, me, self.base())
         return self.text(200, body)
 
+    def agent_chess(self, room, me, body):
+        """GET: the table; POST: 'challenge NAME', a move, 'resign' or 'draw'"""
+        url = f"{self.base()}/a/{room.person(me)['token']}"
+        with lock:
+            room.touch(me)
+            self.connect(room, room.person(me))
+            err = None
+            if body is not None:
+                said = body.strip().strip("'\"")
+                word = said.split(None, 1)[0].lower() if said else ""
+                if word == "challenge":
+                    name = said.split(None, 1)[1].strip().strip("'\"").lstrip("@") if " " in said else ""
+                    other = next((p for p in room.meta["people"] if room.label(p).lower() == name.lower() and not p.get("revoked")), None)
+                    err = chess_challenge(room, me, other)
+                elif word in ("resign", "draw"):
+                    err = chess_play(room, me, word)
+                elif said:
+                    err = chess_play(room, me, "move", said)
+                else:
+                    err = "say what you want to do: a move, 'challenge NAME', 'resign' or 'draw'"
+            table = chess_text(room, me, url)
+            last = len(room.messages)
+        head = f"Not done: {err}.\n\n" if err else ("Done.\n\n" if body is not None else "")
+        return self.text(409 if err else 200, f"{head}{table}\nKeep listening:\n  curl -s '{url}/wait?since={last}&timeout=90'\n")
+
     def announce(self, room, p):
         if not p.get("announced"):
             p["announced"] = True
@@ -785,7 +1010,7 @@ class Handler(BaseHTTPRequestHandler):
             msgs = room.messages[since:]
             last = len(room.messages)
             url = f"{self.base()}/a/{room.person(me)['token']}"
-            out = agent_render(room, msgs, me) if msgs else "(no messages)"
+            out = agent_render(room, msgs, me, url) if msgs else "(no messages)"
         return self.text(200, f"{out}\n\n--- last message #{last}\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_wait(self, room, me, q):
@@ -798,6 +1023,9 @@ class Handler(BaseHTTPRequestHandler):
 
         def fresh():
             return [m for m in room.messages[since:] if m["kind"] != "system" and m["from"] != me]
+
+        def news():
+            return chess_news(room, me)
 
         # Headers go out at once and a newline every 20 s keeps proxies (Cloudflare
         # drops a request after 100 s of silence) from cutting a long wait.
@@ -818,13 +1046,17 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 with lock:
                     left = deadline - now()
-                    if not fresh() and left > 0:
-                        room.cond.wait_for(lambda: bool(fresh()), timeout=min(20, left))
-                    got = fresh()
-                    if got or deadline - now() <= 0:
+                    if not fresh() and not news() and left > 0:
+                        room.cond.wait_for(lambda: bool(fresh()) or bool(news()), timeout=min(20, left))
+                    got, game = fresh(), news()
+                    if got or game or deadline - now() <= 0:
                         msgs = room.messages[since:]
                         last = len(room.messages)
-                        out = agent_render(room, msgs, me) if got else "(nothing new)"
+                        out = agent_render(room, msgs, me, url) if got else "(nothing new)"
+                        if game:
+                            out = ("" if got else "(no new messages)\n\n") + (out + "\n\n" if got else "") + chess_text(room, me, url)
+                            g = room.meta["chess"]
+                            mine = not g.get("result") and to_move(g) == me
                         break
                 self.wfile.write(b"\n")
                 self.wfile.flush()
@@ -838,6 +1070,7 @@ class Handler(BaseHTTPRequestHandler):
         if out is not None:
             try:
                 nxt = ("Next: the room is quiet, not over. Keep listening, run the same wait again:" if out == "(nothing new)" else
+                       "Next: make your chess move (POST /chess, above), then keep listening:" if game and mine else
                        "Next: reply if you have something to say (POST /say), then keep listening:")
                 self.wfile.write(f"{out}\n\n--- last message #{last}\n{nxt}\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
             except (BrokenPipeError, ConnectionResetError):

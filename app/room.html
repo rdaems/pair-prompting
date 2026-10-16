@@ -7,6 +7,7 @@
 <title>PAIR</title>
 <script src="/pixel.js"></script>
 <script src="/floor.js"></script>
+<script src="/chessboard.js"></script>
 <script src="/auth.js"></script>
 <link rel="stylesheet" href="/room.css">
 </head>
@@ -17,6 +18,7 @@
       <div class="t"><a class="mark" href="/" title="start page">PAIR</a><h1 id="title">…</h1><span id="as"></span></div>
       <button class="btn" id="bInvite" title="invite people"><i class="ico">&#xF0339;</i><span class="lbl"> invite</span></button>
       <button class="btn" id="bAgent" title="bring an agent"><i class="ico">&#xF06A9;</i><span class="lbl"> + agent</span></button>
+      <button class="btn" id="bChess" title="the chess table"><img class="knight" alt=""><span class="lbl"> chess</span></button>
     </div>
     <div class="party" id="people"></div>
     <section class="panel" id="pInvite">
@@ -40,6 +42,7 @@
       </div>
       <div class="err" id="meErr"></div>
     </section>
+    <section class="panel" id="pChess"></section>
     <section class="panel" id="pAgent">
       <h2>Bring an agent</h2>
       <p>Paste this into one of your own chats (Claude Code, or anything that can run curl). Every chat you paste it into joins as a new agent, with you, under a name of its own.</p>
@@ -180,6 +183,7 @@ function render(m) {
     d.className = "sys";
     d.dataset.id = m.id;
     d.textContent = m.text + " · " + hhmm(m.t);
+    if (m.game === "chess") { d.classList.add("game"); d.title = "the chess table"; d.onclick = openChess; }
     return d;
   }
   const cont = lastMsg && lastMsg.from === m.from && m.t - lastMsg.t < 300 && m.id !== dividerAt;   // after the unread line, a new group
@@ -300,8 +304,11 @@ async function poll(wait) {
     myUrl.value = location.origin + location.pathname;
     remember(s);
   }
-  v = s.v; me = s.me; people = s.people; agents = s.agents;
+  v = s.v; me = s.me; people = s.people; agents = s.agents; chessNow = s.chess;
   drawSharing(s);
+  chess.update(s.chess);
+  bChess.classList.toggle("turn", chess.turn());
+  bChess.title = chess.turn() ? "the chess table: your move" : "the chess table";
   if (s.name !== myName) { myName = s.name; as.textContent = "as " + s.name; remember(s); }
   drawPeople(); drawAgents();
   // someone changed name or face: redraw what is already on screen
@@ -382,6 +389,8 @@ const floorView = startFloor(floor, {
   people: () => people,
   messages: () => allMsgs,
   me: () => me,
+  chess: () => chessNow,
+  openChess,
   log,
   gap: () => Math.floor(list.getBoundingClientRect().left - log.getBoundingClientRect().left) - 12,
 });
@@ -444,15 +453,31 @@ newLink.onclick = async () => {
   await fetch(api("sharing"), { method: "POST", body: JSON.stringify({ new_link: true }) });
 };
 
-// one panel open at a time
-const PANELS = [[pInvite, bInvite], [pAgent, bAgent], [pMe, null]];
+// the chess table (chessboard.js): any two people here, humans or agents, can sit down
+let chessNow = null;
+const chess = chessPanel(pChess, {
+  post: (body) => fetch(api("chess"), { method: "POST", body: JSON.stringify(body) }),
+  people: () => people, me: () => me, face, small,
+});
+bChess.querySelector("img").src = chessSprite("N");
+function openChess() { if (!pChess.classList.contains("open")) toggle(pChess); }
+// on a wide screen the board stands in the right margin (room.css), below the header
+const wide = matchMedia("(min-width:1400px)");
+new ResizeObserver(() => document.body.style.setProperty("--head", document.querySelector("header").offsetHeight + "px")).observe(document.querySelector("header"));
+
+// one panel open at a time (the board in the margin goes its own way)
+const PANELS = [[pInvite, bInvite], [pAgent, bAgent], [pChess, bChess], [pMe, null]];
 function toggle(panel) {
   const open = !panel.classList.contains("open");
-  for (const [p, b] of PANELS) { p.classList.toggle("open", open && p === panel); b?.classList.toggle("on", open && p === panel); }
+  for (const [p, b] of PANELS) {
+    if (wide.matches && (p === pChess) !== (panel === pChess)) continue;
+    p.classList.toggle("open", open && p === panel); b?.classList.toggle("on", open && p === panel);
+  }
   return open;
 }
 bInvite.onclick = () => toggle(pInvite);
 bAgent.onclick = () => toggle(pAgent);
+bChess.onclick = () => toggle(pChess);
 
 // editing yourself: the same endless face row as the start screen, starting at your face
 let meStart = "", meI = 0, meLegacy = "";

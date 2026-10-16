@@ -168,3 +168,61 @@ footer .wrap { padding-top:10px; padding-bottom:12px; }
   background:var(--me); color:var(--ink); border:0; border-radius:99px; padding:5px 14px; font:inherit; font-size:13px; font-weight:700;
   box-shadow:0 4px 14px rgba(0,0,0,.5); }
 .newbelow[hidden] { display:none; }
+
+/* the chess table: a pixel board after the office's, the moves beside it */
+.btn .knight { width:18px; height:18px; image-rendering:pixelated; vertical-align:-4px; }
+.btn.turn { border-color:var(--gold); color:var(--gold); box-shadow:0 0 0 1px var(--gold) inset; }
+.sys.game { cursor:pointer; }
+.sys.game:hover { color:var(--dim); }
+.ch-who { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-bottom:10px; }
+.ch-pl { display:inline-flex; align-items:center; gap:7px; padding:2px 8px 2px 2px; border:1px solid transparent; border-radius:6px; }
+.ch-pl.on { border-color:var(--c); }
+.ch-pl b { color:var(--c); }
+.ch-pl small { color:var(--dim); font-size:12px; }
+.ch-pl .pic, .ch-pl .pic img { width:28px; height:28px; }
+.ch-pl .pic .badge { width:18px; height:18px; right:-5px; bottom:-5px; }
+.ch-pl .pic .badge img { width:14px; height:14px; }
+.ch-who .vs { color:var(--faint); }
+.ch { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+.ch-board { flex:none; display:grid; grid-template-columns:repeat(8, minmax(0, 1fr)); grid-template-rows:repeat(8, minmax(0, 1fr)); width:min(100%, 336px); aspect-ratio:1; border:2px solid var(--ink); box-shadow:0 0 0 1px #4a2e2a; }
+.ch-board.idle { filter:saturate(.7) brightness(.85); }
+.sq { position:relative; display:flex; align-items:center; justify-content:center; padding:0; border:0; margin:0; cursor:pointer; min-width:0; min-height:0; overflow:hidden; }
+.sq.l { background:#d9c49a; }
+.sq.d { background:#a08670; }
+.sq.last { box-shadow:inset 0 0 0 100px rgba(242,165,49,.38); }
+.sq.sel { box-shadow:inset 0 0 0 3px var(--me); }
+.sq.to::after { content:""; width:26%; height:26%; background:rgba(20,15,30,.45); }
+.sq.hit { box-shadow:inset 0 0 0 3px rgba(20,15,30,.55); }
+.sq.check { background:radial-gradient(circle, #e8402a 0 30%, #8e1f2a 75%); }
+.sq img { width:min(36px, 88%); height:auto; aspect-ratio:1; image-rendering:pixelated; pointer-events:none; }
+.sq i { position:absolute; font-style:normal; font-size:9px; line-height:1; color:rgba(20,15,30,.55); pointer-events:none; }
+.sq .rk { left:2px; top:2px; }
+.sq .fl { right:2px; bottom:2px; }
+.ch-side { flex:1; min-width:200px; }
+.ch-status { margin:0 0 8px; color:var(--text) !important; }
+.ch-status.mine { color:var(--gold) !important; font-weight:700; }
+.ch-promo { display:flex; align-items:center; gap:6px; margin-bottom:8px; color:var(--dim); }
+.ch-promo .btn { padding:2px 4px; background:#d9c49a; }
+.ch-promo img { width:32px; height:32px; image-rendering:pixelated; display:block; }
+.ch-moves { list-style:none; margin:0 0 10px; padding:6px 8px; max-height:190px; overflow-y:auto; background:var(--code); border:1px solid var(--line); border-radius:6px; columns:2; column-gap:16px; font-size:13px; }
+.ch-moves li { break-inside:avoid; white-space:nowrap; }
+.ch-moves span { color:var(--faint); display:inline-block; min-width:2.6em; }
+.ch-acts { display:flex; gap:8px; }
+.ch-play { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
+.ch-play span { color:var(--dim); }
+.ch-play .who-chip { padding:3px 8px 3px 3px; border:1px solid var(--line); border-radius:6px; }
+.ch-play .who-chip:hover { border-color:var(--c); }
+/* wide screens: the board sits in the empty right margin, the conversation and the office keep their room */
+@media (min-width:1400px) {
+  #pChess { position:fixed; z-index:3; margin:0; right:12px; top:calc(var(--head, 92px) + 12px);
+    width:calc((100vw - 848px) / 2 - 24px); max-width:420px; max-height:calc(100vh - var(--head, 92px) - 110px); overflow-y:auto;
+    box-shadow:0 8px 24px rgba(0,0,0,.45); }
+  #pChess .ch-board { width:100%; }
+  #pChess .ch-side { min-width:0; flex-basis:100%; }
+  #pChess .ch-who { flex-direction:column; align-items:flex-start; }
+  #pChess .ch-who .vs { display:none; }
+}
+@media (max-width:640px) {
+  .ch-who { flex-direction:column; align-items:flex-start; }
+  .ch-who .vs { display:none; }
+}

@@ -4,13 +4,14 @@
 // They type when they post, fetch coffee, print, chat at the water cooler, play
 // ping-pong, call a meeting at the whiteboard, water the plants, read in the armchair; how often they
 // get up follows how quiet they have been. People who are away doze at their desk.
+// The chess table is real: while two people play (chessboard.js), they sit at it.
 //
 // You can play along: click the floor and your figure walks there, click a piece of
 // furniture and it uses it, click someone and it goes over for a chat, click yourself
 // to wave, and pick anyone up by dragging them. All of it happens in your own
 // browser only; nobody else sees it, and it never touches the conversation.
 //
-// startFloor(canvas, room) with room = { people(), messages(), me(), gap(), log };
+// startFloor(canvas, room) with room = { people(), messages(), me(), gap(), log, chess(), openChess() };
 // returns { size(), hop(id) }. One grid pixel is two CSS pixels.
 function startFloor(cv, room) {
   const C = pixelAvatar.C, INK = C.ink;
@@ -130,10 +131,21 @@ function startFloor(cv, room) {
       const x = Math.round((i % cols) * cw + cw / 2 + 4), y = Math.round(top + Math.floor(i / cols) * gap);
       o.desks.set(id, { x, y, seat: { x: x - 10, y } });
     });
-    // between the desks and the coffee corner, if there is room: a rug with a ping-pong table
+    // between the desks and the coffee corner, if there is room: the chess table, and a rug
+    // with a ping-pong table beside it or below it
     const below = top + (rows - 1) * gap + 14, room_ = floorY - 34 - below;
-    o.pong = room_ >= 46 && W >= 70 ? { x: Math.round(W / 2), y: Math.round(below + room_ / 2 + 10) } : null;
+    o.pong = o.chess = null;
+    if (room_ >= 40 && W >= 60) {
+      if (W >= 150 && room_ >= 46) {
+        o.pong = { x: Math.round(W * 0.38), y: Math.round(below + room_ / 2 + 10) };
+        o.chess = { x: o.pong.x + 66, y: o.pong.y - 2 };
+      } else if (room_ >= 92 && W >= 70) {
+        o.chess = { x: Math.round(W / 2), y: below + 30 };
+        o.pong = { x: Math.round(W / 2), y: Math.round(below + 30 + (room_ - 30) / 2 + 12) };
+      } else o.chess = { x: Math.round(W / 2), y: Math.round(below + room_ / 2 + 10) };
+    }
     if (o.pong) o.pong.spot = [{ x: o.pong.x - 22, y: o.pong.y + 1 }, { x: o.pong.x + 22, y: o.pong.y + 1 }];
+    if (o.chess) o.chess.seat = [{ x: o.chess.x - 13, y: o.chess.y, dir: 1 }, { x: o.chess.x + 13, y: o.chess.y, dir: -1 }];
     return o;
   }
 
@@ -233,6 +245,17 @@ function startFloor(cv, room) {
       return;
     }
     if (f.act?.kind === "doze") end(f);
+    const seat = chessSeat(f);
+    if (seat) {                              // playing chess: at the table until the game ends
+      if (f.act?.kind !== "chess") { end(f); f.act = { kind: "chess" }; }
+      if (walk(f, seat, v + 6, dt)) {
+        f.dir = seat.dir; f.legs = "sit";
+        f.arms = f.moved > 0 ? "fwd1" : "down";
+      }
+      f.moved = Math.max(0, (f.moved || 0) - dt);
+      return;
+    }
+    if (f.act?.kind === "chess") end(f);
     const act = f.act;
     if (!act || act.kind === "desk") {
       f.act = act || { kind: "desk" };
@@ -331,6 +354,21 @@ function startFloor(cv, room) {
       default: end(f);
     }
   }
+  function chessSeat(f) {
+    const g = room.chess && room.chess();
+    if (!L.chess || !g || g.result || g.free) return null;
+    return g.white.id === f.id ? L.chess.seat[0] : g.black.id === f.id ? L.chess.seat[1] : null;
+  }
+  let chessPly = null;
+  function chessMoves() {                    // whoever just moved reaches over the board
+    const g = room.chess && room.chess();
+    const ply = g ? g.id + ":" + g.sans.length : null;
+    if (g && chessPly !== null && ply !== chessPly && g.sans.length) {
+      const f = folk.get(g.sans.length % 2 ? g.white.id : g.black.id);
+      if (f) f.moved = 0.9;
+    }
+    chessPly = ply;
+  }
   function stroke() {                        // the host draws on the whiteboard: boxes, arrows, dots
     const b = L.board, w = b.x1 - b.x0 - 4, h = b.y1 - b.y0 - 4;
     const x = Math.floor(rnd(0, w - 6)), y = Math.floor(rnd(1, h - 2)), k = Math.random();
@@ -347,6 +385,7 @@ function startFloor(cv, room) {
     const figs = people.map((p) => figure(p));
     const present = figs.filter((f) => f.p.present);
     const idle = present.filter((f) => f.act?.kind === "desk" && f.legs === "sit" && f !== held);
+    chessMoves();
     for (const f of figs) think(f, activity(f.id), dt, idle, present);
     if (meeting && (meeting.left -= dt) <= 0) {
       for (const f of figs) if (f.act?.kind === "meeting" || f.act?.kind === "present") end(f);
@@ -377,6 +416,10 @@ function startFloor(cv, room) {
     if (L.printer) items.push({ y: L.printer.y, d: () => drawPrinter(ctx, L.printer) });
     if (L.chair) items.push({ y: L.chair.y - 0.5, d: () => drawArmchair(ctx, L.chair) });
     if (L.pong) { drawRug(ctx, L.pong); items.push({ y: L.pong.y - 0.5, d: () => drawPong(ctx, L.pong) }); }
+    if (L.chess) {
+      for (const st of L.chess.seat) items.push({ y: st.y - 0.5, d: () => drawStool(ctx, st) });
+      items.push({ y: L.chess.y + 0.5, d: () => drawChess(ctx, L.chess) });
+    }
     for (const pl of L.plants) items.push({ y: pl.y, d: () => drawPlant(ctx, pl) });
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.d();
@@ -536,6 +579,27 @@ function startFloor(cv, room) {
       ctx.fillStyle = INK; ctx.fillRect(Math.round(x) - 1, y - 1, 3, 3); ctx.fillStyle = C.white; ctx.fillRect(Math.round(x), y, 1, 1);
     }
   }
+  function drawStool(ctx, st) {
+    box(ctx, st.x - 4, st.y - 7, 8, 2, WOOD_D);
+    ctx.fillStyle = WOOD_D; ctx.fillRect(st.x - 3, st.y - 4, 1, 4); ctx.fillRect(st.x + 2, st.y - 4, 1, 4);
+  }
+  function drawChess(ctx, c) {               // a small table with the board on it, the position as it stands
+    const g = room.chess && room.chess(), b = g ? g.board : "RNBQKBNRPPPPPPPP" + ".".repeat(32) + "pppppppprnbqkbnr";
+    box(ctx, c.x - 2, c.y - 9, 4, 9, WOOD_D);
+    box(ctx, c.x - 6, c.y - 1, 12, 1, WOOD_D);
+    box(ctx, c.x - 9, c.y - 12, 18, 3, WOOD);
+    // the board seen from the side: eight files, the back half and the front half
+    for (let f = 0; f < 8; f++) for (let r = 0; r < 2; r++) {
+      ctx.fillStyle = (f + r) % 2 ? "#a08670" : "#d9c49a";
+      ctx.fillRect(c.x - 8 + f * 2, c.y - 13 + r, 2, 1);
+    }
+    for (let f = 0; f < 8; f++) {           // a piece on a file stands up from the board, white in front
+      const col = [...Array(8)].map((_, r) => b[r * 8 + f]);
+      const w = col.some((p) => p !== "." && p === p.toUpperCase()), k = col.some((p) => p !== "." && p === p.toLowerCase());
+      if (k) { ctx.fillStyle = C.ink2; ctx.fillRect(c.x - 8 + f * 2, c.y - 15, 1, 2); }
+      if (w) { ctx.fillStyle = C.steel4; ctx.fillRect(c.x - 7 + f * 2, c.y - 14, 1, 2); }
+    }
+  }
   function drawPlant(ctx, pl) {
     box(ctx, pl.x - 3, pl.y - 5, 6, 5, "#b86a1e");
     const leaves = [[-4, -9, C.green0], [2, -11, C.green1], [-1, -14, C.green1], [3, -7, C.green0], [-3, -12, C.green1]];
@@ -556,6 +620,7 @@ function startFloor(cv, room) {
     const inR = (x0, y0, x1, y1) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
     if (inR(L.coffee.x0, L.coffee.y - 22, L.coffee.x1, L.coffee.y)) return { kind: "coffee", stage: 0, wait: 0 };
     if (L.pong && inR(L.pong.x - 16, L.pong.y - 17, L.pong.x + 16, L.pong.y) && !anyone("pong")) return "pong";
+    if (L.chess && inR(L.chess.x - 12, L.chess.y - 17, L.chess.x + 12, L.chess.y)) return "chess";
     if (L.cooler && inR(L.cooler.x - 4, L.cooler.y - 18, L.cooler.x + 4, L.cooler.y)) return { kind: "goto", to: L.cooler.spot[0], left: 6 };
     if (L.printer && inR(L.printer.x - 7, L.printer.y - 14, L.printer.x + 7, L.printer.y)) return { kind: "print", stage: 0, wait: 0 };
     if (L.chair && inR(L.chair.x - 10, L.chair.y - 22, L.chair.x + 17, L.chair.y)) return { kind: "chair", left: 20 };
@@ -598,7 +663,8 @@ function startFloor(cv, room) {
       return;
     }
     const t = hitThing(g.x, g.y);
-    if (t === "pong") {                      // challenge whoever is free; on your own you just stand there
+    if (t === "chess") room.openChess();
+    else if (t === "pong") {                      // challenge whoever is free; on your own you just stand there
       const g = [...folk.values()].find((f) => f.p.present && f !== me && !busy(f));
       tell(me, { kind: "pong", side: 0, left: 30, with: g || null });
       if (g) { end(g); g.act = { kind: "pong", side: 1, left: 30, with: me }; }
