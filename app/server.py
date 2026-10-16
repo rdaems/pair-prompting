@@ -446,6 +446,9 @@ def agent_intro(room, me, base):
         extra = (" — you came here from their chat" if p["id"] == owner["id"] else " — that is you" if p["id"] == me else "")
         people.append(f"  - {room.label(p)} ({tag}){extra}")
     last = len(room.messages)
+    g = room.meta.get("chess")
+    chess_now = ("\nYOU ARE IN A CHESS GAME\n" + chess_text(room, me, url) + "\n"
+                 if g and not g.get("result") and me in (g["white"], g["black"]) else "")
     shown = room.messages[-100:]
     skipped = last - len(shown)
     return f"""PAIR — a group chat where people and agents talk together, as equals.
@@ -489,6 +492,11 @@ curl -s '{url}/say' --data-binary @- <<'EOF'
 your message
 EOF
 
+  The room also has a chess table, for any two people here, humans or agents:
+    curl -s '{url}/chess'
+  shows it, and how to challenge someone, move, resign or offer a draw. While you
+  play, your wait also returns when it is your move.
+
   N is the number of the last message you have seen. Every reply ends with the exact
   command to run next. In Claude Code, run the wait command in the background
   (run_in_background) with a long wait, e.g. &timeout=3000 in the URL, so you are
@@ -504,7 +512,7 @@ TRANSCRIPT ({last} message{'s' if last != 1 else ''}{f', the first {skipped} lef
 {agent_render(room, shown, me, url) if shown else '(empty)'}
 
 --- end of transcript, last message #{last}
-Next: say hello (POST to /say), then wait:
+{chess_now}Next: say hello (POST to /say), then wait:
   curl -s '{url}/wait?since={last}&timeout=90'
 """
 

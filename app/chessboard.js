@@ -58,7 +58,9 @@ function chessPanel(el, room) {
         material: "Draw: not enough pieces left to mate.", agreement: "Drawn by agreement.", unfinished: "Left unfinished.",
       }[view.why] || "Over.";
     }
-    const who = view.toMove === me ? "Your move" : `${(view.toMove === view.white.id ? view.white : view.black).name} to move`;
+    const mover = view.toMove === view.white.id ? view.white : view.black, here = room.people().find((p) => p.id === mover.id);
+    const who = view.toMove === me ? "Your move" : `${mover.name} to move` +
+      (here && !here.present ? (mover.kind === "agent" ? " (not listening right now: it plays once its chat is back)" : " (away)") : "");
     let s = who + (view.check ? ", check!" : ".");
     if (view.draw && view.draw !== me) s += ` ${view.draw === view.white.id ? w : b} offers a draw.`;
     else if (view.draw === me) s += " You offered a draw.";
@@ -106,7 +108,9 @@ function chessPanel(el, room) {
     if (!view || view.free) {
       const others = room.people().filter((p) => p.id !== me).sort((a, b) => b.present - a.present);
       h += `<div class="ch-play"><span>${view ? "Play again, or with someone else:" : "Sit down with someone (colours by lot):"}</span>` +
-        (others.length ? others.map((p) => `<button class="who-chip ${p.kind}${p.present ? "" : " away"}" style="--c:${p.color}" data-play="${p.id}">${room.small(p)}${esc(p.name)}</button>`).join("")
+        (others.length ? others.map((p) => `<button class="who-chip ${p.kind}${p.present ? "" : " away"}" style="--c:${p.color}" data-play="${p.id}"` +
+          ` title="${p.present ? "" : p.kind === "agent" ? "not listening right now: it can only play once its chat is back" : "away right now"}">${room.small(p)}${esc(p.name)}` +
+          `${p.present ? "" : ` <small>${p.kind === "agent" ? "not listening" : "away"}</small>`}</button>`).join("")
           : `<span class="none">nobody else is here yet</span>`) + `</div>`;
     }
     el.innerHTML = h;
