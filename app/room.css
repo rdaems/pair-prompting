@@ -226,3 +226,26 @@ footer .wrap { padding-top:10px; padding-bottom:12px; }
   .ch-who { flex-direction:column; align-items:flex-start; }
   .ch-who .vs { display:none; }
 }
+
+/* ping-pong: a card over the room, the table drawn in pixels at whole multiples */
+.pong { position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(11,8,18,.72); }
+.pong[hidden] { display:none; }
+.pg-card { width:min(100%, 680px); background:var(--box); border:1px solid var(--line); border-radius:10px; padding:12px 16px 14px; box-shadow:0 12px 40px rgba(0,0,0,.6); }
+.pg-head { display:flex; align-items:center; gap:10px; min-height:26px; margin-bottom:8px; }
+.pg-pl { flex:1; display:flex; align-items:center; gap:7px; min-width:0; white-space:nowrap; overflow:hidden; }
+.pg-pl.r { justify-content:flex-end; }
+.pg-pl img { width:20px; height:20px; image-rendering:pixelated; }
+.pg-pl small { color:var(--gold); font-size:12px; }
+.pg-score { font:16px/16px "Pair Pixel", monospace; color:var(--gold); letter-spacing:2px; white-space:nowrap; }
+.pg-close { margin-left:4px; }
+.pong canvas { display:block; width:100%; image-rendering:pixelated; image-rendering:crisp-edges; touch-action:none; cursor:none; border-radius:4px; }
+.pong canvas[hidden] { display:none; }
+.pg-msg h2 { margin:0 0 6px; font-size:14px; color:var(--me); }
+.pg-msg p { margin:8px 0; color:var(--dim); }
+.pg-msg p b { font-weight:700; }
+.pg-who { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+.pg-who .who-chip { padding:3px 8px 3px 3px; border:1px solid var(--line); border-radius:6px; }
+.pg-who .who-chip:hover { border-color:var(--c); }
+.pg-acts { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.pg-hint { color:var(--faint); font-size:12px; margin-top:8px; text-align:center; }
+.pg-hint[hidden] { display:none; }

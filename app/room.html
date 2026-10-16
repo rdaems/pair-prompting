@@ -8,6 +8,7 @@
 <script src="/pixel.js"></script>
 <script src="/floor.js"></script>
 <script src="/chessboard.js"></script>
+<script src="/pong.js"></script>
 <script src="/auth.js"></script>
 <link rel="stylesheet" href="/room.css">
 </head>
@@ -19,6 +20,7 @@
       <button class="btn" id="bInvite" title="invite people"><i class="ico">&#xF0339;</i><span class="lbl"> invite</span></button>
       <button class="btn" id="bAgent" title="bring an agent"><i class="ico">&#xF06A9;</i><span class="lbl"> + agent</span></button>
       <button class="btn" id="bChess" title="the chess table"><img class="knight" alt=""><span class="lbl"> chess</span></button>
+      <button class="btn" id="bPong" title="ping-pong"><img class="knight" alt=""><span class="lbl"> pong</span></button>
     </div>
     <div class="party" id="people"></div>
     <section class="panel" id="pInvite">
@@ -56,6 +58,7 @@
   <button class="newbelow" id="newBelow" hidden></button>
   <canvas id="floor" aria-hidden="true" hidden></canvas>
 </div>
+<div id="pong" class="pong" hidden></div>
 <footer>
   <div class="wrap">
     <ul class="suggest" id="suggest" hidden></ul>
@@ -307,6 +310,9 @@ async function poll(wait) {
   v = s.v; me = s.me; people = s.people; agents = s.agents; chessNow = s.chess;
   drawSharing(s);
   chess.update(s.chess);
+  pongNow = s.pong; pong.update(s.pong);
+  bPong.classList.toggle("turn", pong.invited());
+  bPong.title = pong.invited() ? "ping-pong: you're invited" : "ping-pong";
   bChess.classList.toggle("turn", chess.turn());
   bChess.title = chess.turn() ? "the chess table: your move" : "the chess table";
   if (s.name !== myName) { myName = s.name; as.textContent = "as " + s.name; remember(s); }
@@ -391,6 +397,8 @@ const floorView = startFloor(floor, {
   me: () => me,
   chess: () => chessNow,
   openChess,
+  pong: () => pongNow,
+  openPong: () => pong.open(),
   log,
   gap: () => Math.floor(list.getBoundingClientRect().left - log.getBoundingClientRect().left) - 12,
 });
@@ -460,6 +468,14 @@ const chess = chessPanel(pChess, {
   people: () => people, me: () => me, face, small,
 });
 bChess.querySelector("img").src = chessSprite("N");
+
+// ping-pong (pong.js): live between two people at their screens, or against the ball machine
+let pongNow = null;
+const pong = pongTable(document.getElementById("pong"), {
+  api, post: (body) => fetch(api("pong"), { method: "POST", body: JSON.stringify(body) }), people: () => people, me: () => me, small,
+});
+bPong.querySelector("img").src = pongIcon();
+bPong.onclick = () => pong.open();
 function openChess() { if (!pChess.classList.contains("open")) toggle(pChess); }
 // on a wide screen the board stands in the right margin (room.css), below the header
 const wide = matchMedia("(min-width:1400px)");

@@ -48,6 +48,10 @@ Any two people in a room, humans or agents, can play chess, one game per room at
 
 An agent plays with curl: `GET /a/<token>/chess` prints the board as text with the moves so far, and on its turn the legal moves; it posts a move in SAN (`Nf3`, `exd5`, `O-O`, `e8=Q`) or as squares (`g1f3`), or `challenge NAME`, `resign`, `draw`. Its wait wakes when it is challenged, when it is its move and when the game ends, so an agent never has to poll. Agents can challenge people and each other; their instructions mention the table in two lines, and an agent that comes back to a room while it is in a game finds the board in them. In the picker, an agent whose chat isn't listening is marked as such: it can only play once its chat is back. The rules (`app/chess.py`: castling, en passant, promotion, check, mate, stalemate, threefold repetition, fifty moves, insufficient material) are checked against the standard perft counts. A game nobody has moved in for an hour no longer holds the table.
 
+## Ping-pong
+
+Ping-pong is live, between two people who are at their screens right now (so not agents: they answer in seconds, a ball needs milliseconds). The `pong` button, or the ping-pong table in the office, opens it: invite someone, and their page opens with the invitation. You move your bat with the mouse, a finger, or ↑ ↓; to 11, two clear, two serves each. Without anyone around you can practise against the ball machine. The server keeps the score and relays serves, hits, misses and bats between the two pages over a stream (server-sent events); each page decides itself whether its own bat reached the ball, and whoever hits the ball sends where it goes, so nobody plays against the lag and both pages draw the same ball. A page that goes away for a few seconds has left the table. The result is a line in the conversation; while two people play, they stand at the office's table.
+
 ## Running it
 
 It's one dependency-free Python file (stdlib only) that serves the pages and the API:

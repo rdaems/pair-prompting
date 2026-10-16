@@ -12,7 +12,7 @@
 // to wave, click a mat for a nap, and pick anyone up by dragging them. All of it happens in your own
 // browser only; nobody else sees it, and it never touches the conversation.
 //
-// startFloor(canvas, room) with room = { people(), messages(), me(), gap(), log, chess(), openChess() };
+// startFloor(canvas, room) with room = { people(), messages(), me(), gap(), log, chess(), openChess(), pong(), openPong() };
 // returns { size(), hop(id) }. One grid pixel is two CSS pixels.
 // What the figures say: office talk, little exchanges, and wisdom in the manner of
 // Deepak Chopra, lettered in a 3x5 pixel font (upper case, like a Pico-8). All of it
@@ -414,7 +414,12 @@ function startFloor(cv, room) {
     if (still) { if (desk) { f.x = desk.seat.x; f.y = desk.seat.y; } f.legs = "sit"; f.arms = "down"; f.dir = 1; return; }
     if (f.away > NAP) { sleep(f, desk, v, dt); return; }   // away a while: off to a mat (or a nap at the desk)
     if (f.act?.kind === "sleep") { end(f); f.hop = 0.6; say(f, "wake", 0.7); }
-    const seat = chessSeat(f);
+    const live = livePong(f);
+    if (live) {                              // playing ping-pong for real: at the table, swinging
+      if (f.act?.kind !== "pong" || !f.act.live) { end(f); f.act = { kind: "pong", side: live.side, left: 1e9, with: live.with, live: true }; }
+      f.act.with = live.with;
+    } else if (f.act?.live) end(f);
+    const seat = live ? null : chessSeat(f);
     if (seat) {                              // playing chess: at the table until the game ends
       if (f.act?.kind !== "chess") { end(f); f.act = { kind: "chess" }; }
       if (walk(f, seat, v + 6, dt)) {
@@ -556,6 +561,12 @@ function startFloor(cv, room) {
       f.lying = !!m; f.dir = 1; f.legs = "sit"; f.arms = m ? "down" : "fwd2"; f.z += dt;
       if (Math.random() < dt * 0.025) say(f, "dream");
     }
+  }
+  function livePong(f) {
+    const g = room.pong && room.pong();
+    if (!L.pong || !g || g.state !== "playing") return null;
+    const s = g.left.id === f.id ? 0 : g.right.id === f.id ? 1 : -1;
+    return s < 0 ? null : { side: s, with: folk.get((s ? g.left : g.right).id) || null };
   }
   function chessSeat(f) {
     const g = room.chess && room.chess();
@@ -879,7 +890,7 @@ function startFloor(cv, room) {
     if (!L) return null;
     const inR = (x0, y0, x1, y1) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
     if (inR(L.coffee.x0, L.coffee.y - 22, L.coffee.x1, L.coffee.y)) return { kind: "coffee", stage: 0, wait: 0 };
-    if (L.pong && inR(L.pong.x - 16, L.pong.y - 17, L.pong.x + 16, L.pong.y) && !anyone("pong")) return "pong";
+    if (L.pong && inR(L.pong.x - 16, L.pong.y - 17, L.pong.x + 16, L.pong.y)) return "pong";
     if (L.chess && inR(L.chess.x - 12, L.chess.y - 17, L.chess.x + 12, L.chess.y)) return "chess";
     for (const [i, m] of L.mats.entries()) if (inR(m.x - 12, m.y - 24, m.x + 12, m.y) && !matOf(i, mine())) return { kind: "nap", mat: i, left: 12 };
     if (L.cooler && inR(L.cooler.x - 4, L.cooler.y - 18, L.cooler.x + 4, L.cooler.y)) return { kind: "goto", to: L.cooler.spot[0], left: 6 };
@@ -925,11 +936,8 @@ function startFloor(cv, room) {
     }
     const t = hitThing(g.x, g.y);
     if (t === "chess") room.openChess();
-    else if (t === "pong") {                      // challenge whoever is free; on your own you just stand there
-      const g = [...folk.values()].find((f) => f.p.present && f !== me && !busy(f));
-      tell(me, { kind: "pong", side: 0, left: 30, with: g || null });
-      if (g) { end(g); g.act = { kind: "pong", side: 1, left: 30, with: me }; }
-    } else if (t === "meeting") {
+    else if (t === "pong") room.openPong();
+    else if (t === "meeting") {
       const others = [...folk.values()].filter((f) => f.p.present && f !== me && !busy(f));
       if (me.p.present) { end(me); me.act = callMeeting(me, others); }
     } else if (t) tell(me, t);

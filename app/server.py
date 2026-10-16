@@ -13,6 +13,10 @@ The chess table (chess.py has the rules): one game at a time per room, between a
 two people here, humans or agents; humans play on a board in the page, agents with
 curl at /a/<token>/chess, and an agent's wait wakes when it is its move.
 
+Ping-pong is live, between two people at their screens: the server keeps the score and
+relays serves, hits, misses and paddles between the two pages over a stream (SSE); each
+page judges its own paddle, so nobody plays against the lag.
+
 Signing in (auth.py) is optional and sits beside the links: an account remembers
 the seats its person holds, so their rooms follow them to every device, and a room
 is still nothing but its links: signing in only keeps them for you.
@@ -37,7 +41,7 @@ DATA = os.environ.get("PAIR_DATA", "/data")
 APP = os.path.dirname(os.path.abspath(__file__))
 MAX_TEXT = 200_000            # one message; agents paste context
 MAX_BODY = 1_000_000
-STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "floor.js": "text/javascript", "chessboard.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
+STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "floor.js": "text/javascript", "chessboard.js": "text/javascript", "pong.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
           "pixel.woff2": "font/woff2", "mono.woff2": "font/woff2", "mono-bold.woff2": "font/woff2",
           "jetbrains-mono-nerd-OFL.txt": "text/plain"}
 COLORS = ["#ffe27a", "#8fc0e8", "#ffb0a8", "#7fdcb0", "#9a74d6", "#f7c59a", "#f2a531", "#5fcf4a"]  # Super Atlas palette, light tones for a dark room
@@ -62,6 +66,9 @@ BOT_WORDS = {
 }
 BOT_NAMES = [f"{a}-{n}" for adj, names in BOT_WORDS.values() for a in adj.split() for n in names.split()]
 PENDING_MAX = 10              # agent links fetched but never used, per human
+PONG_TO = 11                 # table tennis: to 11, two clear
+PONG_INVITE = 60             # an invitation stands for a minute
+PONG_GRACE = 5               # a dropped stream may come back this long before it counts as leaving
 CHESS_IDLE = 3600            # a game nobody has moved in for an hour no longer holds the table
 MAX_ROOMS = 2000            # room creation is the one write that needs no token:
 NEW_PER_HOUR = 20           # cap it, per client address and in total
@@ -92,6 +99,11 @@ class Room:
         self.seen = {}            # participant id -> last request time
         self.told = {}            # agent id -> the state of its chess game it was last shown
         self._game = (None, None)  # (game id, moves) -> chess.Game, replayed once
+        self.pong = None          # the ping-pong game, in memory only: it lives as long as its streams
+        self.pong_cond = threading.Condition(lock)   # its events wake only its streams, never /state
+        self.pong_ring = []       # its last events, each with a sequence number
+        self.pong_seq = 0
+        self.pong_streams = {}    # participant id -> open streams
 
     @property
     def dir(self):
@@ -416,6 +428,118 @@ def chess_text(room, me, url):
     return "\n".join(out) + "\n"
 
 
+# ---------- ping-pong ----------
+
+def pong_free(g):
+    return not g or g["state"] == "over" or (g["state"] == "invited" and now() - g["t"] > PONG_INVITE)
+
+
+def pong_emit(room, ev):
+    room.pong_seq += 1
+    room.pong_ring.append({**ev, "seq": room.pong_seq, "ts": round(now(), 3), "game": room.pong["id"]})
+    del room.pong_ring[:-256]
+    room.pong_cond.notify_all()
+
+
+def pong_server(score):
+    """who serves: two serves each, one each from 10-10 on; the inviter starts"""
+    n = score[0] + score[1]
+    return n % 2 if min(score) >= PONG_TO - 1 else (n // 2) % 2
+
+
+def pong_over(room, why, winner=None):
+    g = room.pong
+    g["state"], g["why"], g["winner"] = "over", why, winner
+    a, b = room.label(room.person(g["left"])), room.label(room.person(g["right"]))
+    sa, sb = g["score"]
+    pong_emit(room, {"k": "over", "why": why, "winner": winner, "score": g["score"]})
+    if why == "points":
+        w, l = (a, b) if winner == g["left"] else (b, a)
+        room.post(None, "system", f"{w} beats {l} at ping-pong, {max(sa, sb)}–{min(sa, sb)}", game="pong")
+    elif why == "left" and sa + sb:
+        room.post(None, "system", f"{room.label(room.person(winner))} and "
+                                  f"{room.label(room.person(g['left'] if winner == g['right'] else g['right']))} "
+                                  f"stopped their ping-pong game at {sa}–{sb}", game="pong")
+    else:
+        room.changed()
+
+
+def pong_act(room, me, b):
+    """an invitation, an answer, leaving, or something that happened in the game; returns an error or None"""
+    g = room.pong
+    if b.get("invite"):
+        other = next((p for p in room.meta["people"] if p["id"] == b["invite"]), None)
+        if not other or other["id"] == me or other.get("revoked") or other["kind"] != "human":
+            return "ping-pong is live: it needs someone at a screen"
+        if not room.present(other["id"]):
+            return f"{room.label(other)} isn't here right now"
+        if not pong_free(g) and not (g["state"] == "invited" and g["left"] == me):
+            return (f"the table is taken: {room.label(room.person(g['left']))} and "
+                    f"{room.label(room.person(g['right']))} are playing")
+        room.pong = {"id": (g["id"] + 1) if g else 1, "left": me, "right": other["id"], "state": "invited",
+                     "score": [0, 0], "t": now(), "why": None, "winner": None}
+        room.pong_ring = []
+        room.changed()
+        return None
+    if not g or me not in (g["left"], g["right"]) or g["state"] == "over":
+        return "you are not in a ping-pong game"
+    other = g["right"] if me == g["left"] else g["left"]
+    if "answer" in b:
+        if g["state"] != "invited" or me != g["right"]:
+            return "there is no invitation for you"
+        if b["answer"]:
+            g["state"], g["t"] = "playing", now()
+            pong_emit(room, {"k": "start", "serve": g["left"], "score": g["score"]})
+            room.changed()
+        else:
+            pong_over(room, "declined")
+        return None
+    if b.get("leave"):
+        pong_over(room, "left" if g["state"] == "playing" else "cancelled", other if g["state"] == "playing" else None)
+        return None
+    ev = b.get("ev") or {}
+    if g["state"] != "playing":
+        return "the game hasn't started"
+    k = ev.get("k")
+    g["t"] = now()
+    if k == "pad":
+        pong_emit(room, {"k": "pad", "from": me, "y": float(ev.get("y") or 0)})
+    elif k in ("serve", "hit"):
+        try:
+            pong_emit(room, {"k": k, "from": me, **{f: float(ev[f]) for f in ("t", "x", "y", "vx", "vy", "pad")}, "r": int(ev.get("r", -1))})
+        except (KeyError, TypeError, ValueError):
+            return "a serve or hit needs t, x, y, vx, vy and pad"
+    elif k == "miss":
+        if int(ev.get("r", -1)) != sum(g["score"]):
+            return None                  # that rally was already counted
+        g["score"][0 if other == g["left"] else 1] += 1
+        sa, sb = g["score"]
+        if max(sa, sb) >= PONG_TO and abs(sa - sb) >= 2:
+            pong_over(room, "points", g["left"] if sa > sb else g["right"])
+        else:
+            pong_emit(room, {"k": "score", "score": g["score"], "serve": (g["left"], g["right"])[pong_server(g["score"])], "by": me})
+    else:
+        return "unknown event"
+    return None
+
+
+def pong_view(room):
+    g = room.pong
+    if not g or (g["state"] == "invited" and now() - g["t"] > PONG_INVITE):
+        return None
+    return {"id": g["id"], "left": room.face(room.person(g["left"])), "right": room.face(room.person(g["right"])),
+            "state": g["state"], "score": g["score"], "why": g["why"], "winner": g["winner"]}
+
+
+def pong_dropped(room, me, game):
+    """a player's stream went away: after a grace period with none back, they left"""
+    with lock:
+        g = room.pong
+        if g and g["id"] == game and g["state"] != "over" and me in (g["left"], g["right"]) and not room.pong_streams.get(me):
+            pong_over(room, "left" if g["state"] == "playing" else "cancelled",
+                      (g["right"] if me == g["left"] else g["left"]) if g["state"] == "playing" else None)
+
+
 # ---------- agent text protocol ----------
 
 def agent_render(room, msgs, me, url=None):
@@ -649,6 +773,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.page("room.html")
             if rest == ["state"]:
                 return self.human_state(hit[1], hit[2], q)
+            if rest == ["pong", "stream"]:
+                return self.pong_stream(hit[1], hit[2], q)
         if kind == "n" and hit and hit[0] == "bring" and not rest:
             return self.agent_new(hit[1], hit[2])
         if kind == "a" and hit and hit[0] == "agent":
@@ -700,6 +826,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.sharing(room, me)
                 if rest == ["chess"]:
                     return self.human_chess(room, me)
+                if rest == ["pong"]:
+                    b = self.json_body()
+                    with lock:
+                        room.touch(me)
+                        err = pong_act(room, me, b)
+                    return self.send(409, {"error": err}) if err else self.send(200, {"ok": True})
                 if len(rest) == 3 and rest[0] == "agents" and rest[2] == "revoke":
                     return self.revoke_agent(room, me, rest[1])
             if kind == "a" and hit and hit[0] == "agent" and rest == ["say"]:
@@ -784,6 +916,7 @@ class Handler(BaseHTTPRequestHandler):
                 "bring": f"{self.base()}/n/{bring_token(room, mine)}",
                 "name": mine["name"],
                 "chess": chess_view(room, me),
+                "pong": pong_view(room),
                 "providers": self.providers(),
                 "account": ({"name": acc["name"], "via": auth.LABEL[acc["provider"]]}
                             if (acc := accounts.accounts.get(mine.get("account") or "")) else None),
@@ -823,6 +956,47 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 err = chess_play(room, me, "move", str(b.get("move") or ""))
         return self.send(409, {"error": err}) if err else self.send(200, {"ok": True})
+
+    def pong_stream(self, room, me, q):
+        """the ping-pong game's events, as server-sent events, for as long as the page listens"""
+        try:
+            since = int(self.headers.get("Last-Event-ID") or q.get("since") or 0)
+        except ValueError:
+            since = 0
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        self.close_connection = True
+        with lock:
+            room.pong_streams[me] = room.pong_streams.get(me, 0) + 1
+            room.touch(me)
+            game = room.pong["id"] if room.pong else None
+            if since > room.pong_seq:
+                since = 0               # the server started again since
+        try:
+            self.wfile.write(f"retry: 1000\ndata: {json.dumps({'k': 'hello', 'ts': round(now(), 3)})}\n\n".encode())
+            self.wfile.flush()
+            while True:
+                with lock:
+                    room.pong_cond.wait_for(lambda: room.pong_seq > since, timeout=3)   # a tick every 3 s finds a closed page soon
+                    evs = [e for e in room.pong_ring if e["seq"] > since]
+                    since = room.pong_seq     # what isn't in the ring any more (an earlier game) is gone
+                    room.touch(me)
+                    if room.pong:
+                        game = room.pong["id"]
+                out = "".join(f"id: {e['seq']}\ndata: {json.dumps(e)}\n\n" for e in evs) if evs else \
+                    f"data: {json.dumps({'k': 'tick', 'ts': round(now(), 3)})}\n\n"
+                self.wfile.write(out.encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            with lock:
+                room.pong_streams[me] -= 1
+            if game is not None:
+                threading.Timer(PONG_GRACE, pong_dropped, (room, me, game)).start()
 
     def claim(self):
         """after signing in: the seats this browser already held become the account's"""
