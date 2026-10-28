@@ -48,14 +48,15 @@ COLORS = ["#ffe27a", "#8fc0e8", "#ffb0a8", "#7fdcb0", "#9a74d6", "#f7c59a", "#f2
 # agents get a star's name, one lowercase word, unique within a room: rigel, pollux, zosma.
 # One word on purpose: Claude Code names its sessions adjective-firstname (cheery-cora), and an
 # agent here called jumpy-jade read as that other session being in the room
-BOT_NAMES = """acamar achernar acrux albireo alcor aldebaran alderamin algieba algol alhena alioth alkaid almach alnair
-alnilam alnitak alphard alphecca alpheratz altair aludra ankaa antares arcturus arneb ascella azha baham
-canopus capella caph castor cursa dabih deneb denebola diphda dubhe elnath eltanin enif errai fomalhaut
-furud gacrux gienah gomeisa hamal homam kochab kraz lesath markab matar mebsuta megrez menkar menkent
-merak mimosa mintaka mirach mirfak mirzam mizar muphrid naos nekkar nunki nusakan phact phecda pherkad
-polaris pollux porrima procyon propus regulus rigel rotanev ruchbah rukbat sabik sadr saiph sargas
-scheat schedar seginus shaula sheliak sheratan sirius spica sulafat tarazed tejat thuban vega wasat
-wezen zaurak zavijava zosma""".split()
+# (screened for words that mean something else in Dutch, English, French, German, Spanish, Italian)
+BOT_NAMES = """acamar achernar acrux albireo alcor aldebaran alderamin algieba algol alhena alioth alkes almach alnair
+alnilam alnitak alphard alphecca alpheratz altair alterf aludra ankaa antares arcturus arneb azha baham
+canopus capella caph castor chertan cursa dabih deneb denebola diphda dubhe edasich elnath eltanin enif
+fomalhaut furud gacrux giausar gienah gomeisa homam kitalpha kochab kraz lesath maasym markab markeb
+mebsuta megrez menkar menkent merak mimosa mintaka mirach mirfak mirzam mizar muphrid naos nekkar nunki
+nusakan phact phecda pherkad polaris pollux porrima procyon propus regulus rigel rotanev ruchbah rukbat
+sabik sadr saiph sargas schedar seginus shaula sheliak sheratan sirius situla spica sulafat tarazed
+tejat thuban tureis vega wasat zaurak zavijava zosma""".split()
 PENDING_MAX = 10              # agent links fetched but never used, per human
 PONG_TO = 11                 # table tennis: to 11, two clear
 PONG_INVITE = 60             # an invitation stands for a minute
