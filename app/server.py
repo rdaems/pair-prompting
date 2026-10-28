@@ -45,26 +45,17 @@ STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/java
           "pixel.woff2": "font/woff2", "mono.woff2": "font/woff2", "mono-bold.woff2": "font/woff2",
           "jetbrains-mono-nerd-OFL.txt": "text/plain"}
 COLORS = ["#ffe27a", "#8fc0e8", "#ffb0a8", "#7fdcb0", "#9a74d6", "#f7c59a", "#f2a531", "#5fcf4a"]  # Super Atlas palette, light tones for a dark room
-# agents get an alliterative handle, unique within a room: dapper-dan, mellow-mona
-BOT_WORDS = {
-    "b": ("bouncy brave breezy bubbly bold", "bob bea bert babs benny"),
-    "c": ("cheery clever cosmic cozy curious", "cleo carl cora chip cass"),
-    "d": ("dapper daring dizzy dreamy dandy", "dan dot dora dex dolly"),
-    "f": ("fancy fizzy frisky funky fuzzy", "fred flo finn fern felix"),
-    "g": ("giddy gentle groovy gutsy gleeful", "gus gina gil greta gary"),
-    "h": ("happy hasty humble hearty hip", "hank hattie hugo hal hazel"),
-    "j": ("jazzy jolly jumpy jovial jaunty", "jim june jojo jack jade"),
-    "l": ("lucky lively loyal lanky lofty", "lou lola leo lily lars"),
-    "m": ("merry mellow mighty misty mild", "max mona milo mabel moe"),
-    "n": ("nifty nimble noble nutty nosy", "ned nora nico nell nate"),
-    "p": ("perky plucky peppy polite posh", "pete pam pip polly perry"),
-    "r": ("rowdy rosy rusty radiant rapid", "rex rosie rudy ruth ray"),
-    "s": ("sunny snappy spunky sleepy swanky", "sam sue stan sid suzy"),
-    "t": ("tidy tiny trusty toasty twinkly", "tom tess ted tina toby"),
-    "w": ("witty wobbly wacky wise wily", "walt wanda wes winnie wally"),
-    "z": ("zany zesty zippy zen zealous", "zed zoe ziggy zara zack"),
-}
-BOT_NAMES = [f"{a}-{n}" for adj, names in BOT_WORDS.values() for a in adj.split() for n in names.split()]
+# agents get a star's name, one lowercase word, unique within a room: rigel, pollux, zosma.
+# One word on purpose: Claude Code names its sessions adjective-firstname (cheery-cora), and an
+# agent here called jumpy-jade read as that other session being in the room
+BOT_NAMES = """acamar achernar acrux albireo alcor aldebaran alderamin algieba algol alhena alioth alkaid almach alnair
+alnilam alnitak alphard alphecca alpheratz altair aludra ankaa antares arcturus arneb ascella azha baham
+canopus capella caph castor cursa dabih deneb denebola diphda dubhe elnath eltanin enif errai fomalhaut
+furud gacrux gienah gomeisa hamal homam kochab kraz lesath markab matar mebsuta megrez menkar menkent
+merak mimosa mintaka mirach mirfak mirzam mizar muphrid naos nekkar nunki nusakan phact phecda pherkad
+polaris pollux porrima procyon propus regulus rigel rotanev ruchbah rukbat sabik sadr saiph sargas
+scheat schedar seginus shaula sheliak sheratan sirius spica sulafat tarazed tejat thuban vega wasat
+wezen zaurak zavijava zosma""".split()
 PENDING_MAX = 10              # agent links fetched but never used, per human
 PONG_TO = 11                 # table tennis: to 11, two clear
 PONG_INVITE = 60             # an invitation stands for a minute
@@ -222,9 +213,9 @@ def add_person(room, kind, **kw):
     else:
         owner = room.person(kw["owner"])
         p["color"] = owner["color"]
-        taken = {room.label(q) for q in people if not q.get("revoked")}
+        taken = {room.label(q).lower() for q in people if not q.get("revoked")}
         free = [n for n in BOT_NAMES if n not in taken]
-        p["name"] = secrets.choice(free) if free else room.unique(secrets.choice(BOT_NAMES)).replace(" ", "-")
+        p["name"] = secrets.choice(free) if free else room.unique(secrets.choice(BOT_NAMES)).replace(" ", "")
         p["avatar"] = secrets.token_hex(4)
     p.update(kw)
     people.append(p)
