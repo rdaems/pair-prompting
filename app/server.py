@@ -534,6 +534,16 @@ def pong_dropped(room, me, game):
 
 # ---------- agent text protocol ----------
 
+def delivered(room, me, since, last):
+    """an agent was just given messages since+1..last: its position (person["read"], the last
+    message it was given) moves up, unless the range starts after it and so left a hole"""
+    p = room.person(me)
+    read = p.get("read")
+    if since < last and (read is None or since <= read < last):
+        p["read"] = last
+        room.save()
+
+
 def agent_render(room, msgs, me, url=None):
     out = []
     for m in msgs:
@@ -562,6 +572,8 @@ def agent_intro(room, me, base):
         extra = (" — you came here from their chat" if p["id"] == owner["id"] else " — that is you" if p["id"] == me else "")
         people.append(f"  - {room.label(p)} ({tag}){extra}")
     last = len(room.messages)
+    a["read"] = last     # what the transcript leaves out, it says so itself
+    room.save()
     g = room.meta.get("chess")
     chess_now = ("\nYOU ARE IN A CHESS GAME\n" + chess_text(room, me, url) + "\n"
                  if g and not g.get("result") and me in (g["white"], g["black"]) else "")
@@ -1131,9 +1143,19 @@ class Handler(BaseHTTPRequestHandler):
             if kind == "agent":
                 self.connect(room, room.person(me))
             m = room.post(me, kind, text)
+            if kind == "agent":
+                p = room.person(me)
+                url = f"{self.base()}/a/{p['token']}"
+                # what came in between what it last read and this post: its next wait starts after this post
+                gap = room.messages[p["read"]:m["id"] - 1] if "read" in p else []
+                written = agent_render(room, gap, me, url) if any(g["kind"] != "system" and g["from"] != me for g in gap) else None
+                p["read"] = m["id"]
+                room.save()
         if json_reply:
             return self.send(200, {"id": m["id"]})
-        url = f"{self.base()}/a/{room.person(me)['token']}"
+        if written:
+            return self.text(200, f"posted as #{m['id']}.\n\nPosted while you were writing:\n\n{written}\n\n--- last message #{m['id']}\n"
+                                  f"Next: reply if you have something to say (POST /say), then keep listening:\n  curl -s '{url}/wait?since={m['id']}&timeout=90'\n")
         return self.text(200, f"posted as #{m['id']}.\nNext, keep listening (a wait after every post, indefinitely):\n  curl -s '{url}/wait?since={m['id']}&timeout=90'\n")
 
     # --- agents
@@ -1166,7 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     err = "say what you want to do: a move, 'challenge NAME', 'resign' or 'draw'"
             table = chess_text(room, me, url)
-            last = len(room.messages)
+            last = room.person(me).get("read", len(room.messages))     # the board delivers no messages
         head = f"Not done: {err}.\n\n" if err else ("Done.\n\n" if body is not None else "")
         return self.text(409 if err else 200, f"{head}{table}\nKeep listening:\n  curl -s '{url}/wait?since={last}&timeout=90'\n")
 
@@ -1177,7 +1199,7 @@ class Handler(BaseHTTPRequestHandler):
             room.post(None, "system", f"{room.label(p)} joined, with {room.person(p['owner'])['name']}")
 
     def agent_messages(self, room, me, q):
-        since = int(q.get("since") or 0)
+        since = max(0, int(q.get("since") or 0))
         with lock:
             room.touch(me)
             self.connect(room, room.person(me))
@@ -1185,10 +1207,11 @@ class Handler(BaseHTTPRequestHandler):
             last = len(room.messages)
             url = f"{self.base()}/a/{room.person(me)['token']}"
             out = agent_render(room, msgs, me, url) if msgs else "(no messages)"
+            delivered(room, me, since, last)
         return self.text(200, f"{out}\n\n--- last message #{last}\nNext: curl -s '{url}/wait?since={last}&timeout=90'\n")
 
     def agent_wait(self, room, me, q):
-        since = int(q.get("since") or 0)
+        since = max(0, int(q.get("since") or 0))
         try:
             timeout = max(1, min(3600, int(q.get("timeout") or 90)))
         except ValueError:
@@ -1214,6 +1237,9 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             room.touch(me)
             self.connect(room, room.person(me))
+            read = room.person(me).get("read")
+            if read is not None:
+                since = min(since, read)    # a lower since is a retry; a higher one can't skip anything
             room.waiting[me] = room.waiting.get(me, 0) + 1
             room.changed()
         try:
@@ -1249,6 +1275,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(f"{out}\n\n--- last message #{last}\n{nxt}\n  curl -s '{url}/wait?since={last}&timeout=90'\n".encode())
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            else:
+                if got:
+                    with lock:
+                        delivered(room, me, since, last)
 
 
 if __name__ == "__main__":
