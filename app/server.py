@@ -65,10 +65,22 @@ PONG_INVITE = 60             # an invitation stands for a minute
 PONG_GRACE = 5               # a dropped stream may come back this long before it counts as leaving
 CHESS_IDLE = 3600            # a game nobody has moved in for an hour no longer holds the table
 MAX_ROOMS = 2000            # room creation is the one write that needs no token:
-NEW_PER_HOUR = 20           # cap it, per client address and in total
+NEW_PER_HOUR = 20           # cap it, per client address (an IPv6 /64 is one address) and in total
+# Everything is kept in memory and on disk for good, so what one room and one person can add is bounded:
+MAX_SEATS = 200             # humans in a room
+MAX_PEOPLE = 3000           # everyone a room ever knew, agents that came and went included
+BRING_PER_HOUR = 60         # new agents per human
+POT = 1_000_000             # characters a person can post at once; an agent's pasted context fits five times
+POT_REFILL = 1000           # characters back per second
+POST_COST = 500             # what the shortest message costs: two a second, sustained
+MAX_ROOM_TEXT = 20_000_000  # characters in one room's conversation
+MAX_ALL_TEXT = 500_000_000  # and in all rooms together
 
 lock = threading.Lock()
 created = {}                  # client address -> recent creation times
+brought = {}                  # (room id, human id) -> recent agent creation times
+pots = {}                     # (room id, participant id) -> (characters left, when)
+all_text = 0                  # characters in every room's conversation
 rooms = {}                    # room id -> Room
 accounts = None               # auth.Accounts, loaded at start
 logins = {}                   # sign-in state -> (provider, where to go after, time)
@@ -87,6 +99,7 @@ class Room:
     def __init__(self, meta, messages):
         self.meta = meta          # {id, name, created, invite, people: [...]}
         self.messages = messages
+        self.size = sum(len(m["text"]) for m in messages)
         self.cond = threading.Condition(lock)
         self.version = 0          # bumped on every change humans should see
         self.waiting = {}         # participant id -> open wait requests
@@ -125,6 +138,9 @@ class Room:
     def post(self, pid, kind, text, **extra):
         msg = {"id": len(self.messages) + 1, "t": round(now(), 3), "from": pid, "kind": kind, "text": text, **extra}
         self.messages.append(msg)
+        global all_text
+        self.size += len(text)
+        all_text += len(text)
         with open(os.path.join(self.dir, "messages.jsonl"), "a") as f:
             f.write(json.dumps(msg) + "\n")
         self.changed()
@@ -198,7 +214,9 @@ def load():
 
 
 def index(room):
+    global all_text
     rooms[room.meta["id"]] = room
+    all_text += room.size
     tokens[room.meta["invite"]] = ("invite", room, None)
     for p in room.meta["people"]:
         if not p.get("revoked"):
@@ -236,6 +254,28 @@ def bring_token(room, p):
         room.save()
     tokens[p["bring"]] = ("bring", room, p["id"])
     return p["bring"]
+
+
+def may_post(room, pid, n):
+    """why a message of n characters can't be posted right now, or None (and it is paid for)"""
+    if room.size + n > MAX_ROOM_TEXT:
+        return "this room is full: its conversation has reached the size limit. Open a new room to go on"
+    if all_text + n > MAX_ALL_TEXT:
+        return "pair is full for now"
+    key, cost = (room.meta["id"], pid), max(n, POST_COST)
+    left, t = pots.get(key, (POT, now()))
+    left = min(POT, left + (now() - t) * POT_REFILL)
+    if cost > left:
+        return f"you are posting too much too fast: try again in {int((cost - left) / POT_REFILL) + 1} s"
+    pots[key] = (left - cost, now())
+    return None
+
+
+def full(room, kind):
+    """a room takes no more humans, or no more people at all"""
+    people = room.meta["people"]
+    return len(people) >= MAX_PEOPLE or (kind == "human" and
+                                         sum(1 for p in people if p["kind"] == "human") >= MAX_SEATS)
 
 
 def clean_avatar(s):
@@ -877,6 +917,8 @@ class Handler(BaseHTTPRequestHandler):
         if not name or not who:
             return self.send(400, {"error": "room name and your name are needed"})
         ip = self.headers.get("Cf-Connecting-Ip") or (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0]
+        if ":" in ip:
+            ip = ":".join(ip.split(":")[:4])
         with lock:
             recent = [t for t in created.get(ip, []) if now() - t < 3600]
             if len(recent) >= NEW_PER_HOUR or len(rooms) >= MAX_ROOMS:
@@ -906,6 +948,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"url": f"/h/{seat['token']}"})
             if room.unique(who) != who:
                 return self.send(409, {"error": f"{who} is already here, pick another name"})
+            if full(room, "human"):
+                return self.send(409, {"error": "this room is full"})
             p = add_person(room, "human", name=who, avatar=clean_avatar(b.get("avatar")), joined=round(now()),
                            **({"account": account["id"]} if account else {}))
             self.remember(account, p)
@@ -958,6 +1002,8 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             who = room.person(me)["name"]
             if b.get("new_link"):
+                if no := may_post(room, me, 0):
+                    return self.send(429, {"error": no})
                 tokens.pop(room.meta["invite"], None)
                 room.meta["invite"] = tok()
                 tokens[room.meta["invite"]] = ("invite", room, None)
@@ -969,6 +1015,8 @@ class Handler(BaseHTTPRequestHandler):
         b = self.json_body()
         with lock:
             room.touch(me)
+            if no := may_post(room, me, 0):
+                return self.send(429, {"error": no})
             if b.get("challenge"):
                 other = next((p for p in room.meta["people"] if p["id"] == b["challenge"]), None)
                 err = chess_challenge(room, me, other)
@@ -1099,6 +1147,11 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             pending = [p for p in room.meta["people"] if p["kind"] == "agent" and p["owner"] == owner
                        and not p.get("joined") and not p.get("revoked")]
+            key = (room.meta["id"], owner)
+            recent = [t for t in brought.get(key, []) if now() - t < 3600]
+            if len(recent) >= BRING_PER_HOUR or full(room, "agent"):
+                return self.text(429, "Too many agents were made with this link. Try again in an hour.\n")
+            brought[key] = recent + [now()]
             for old in pending[:max(0, len(pending) - PENDING_MAX + 1)]:
                 old["revoked"] = round(now())
                 tokens.pop(old["token"], None)
@@ -1122,6 +1175,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"error": "a name is needed"})
             if name != old and room.unique(name, me) != name:
                 return self.send(409, {"error": f"{name} is already here, pick another name"})
+            if name != old and (no := may_post(room, me, 0)):    # a rename is a line in the conversation
+                return self.send(429, {"error": no})
             if "avatar" in b:
                 p["avatar"] = clean_avatar(b.get("avatar"))
             p["name"] = name
@@ -1159,6 +1214,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(413, {"error": msg}) if json_reply else self.text(413, msg + "\n")
         with lock:
             room.touch(me)
+            no = may_post(room, me, len(text))
+            if no:
+                if json_reply:
+                    return self.send(429, {"error": no})
+                url = f"{self.base()}/a/{room.person(me)['token']}"
+                return self.text(429, f"not posted: {no}.\nKeep listening:\n  curl -s '{url}/wait?since={room.person(me).get('read', 0)}&timeout=90'\n")
             if kind == "agent":
                 self.connect(room, room.person(me))
             m = room.post(me, kind, text)
@@ -1193,7 +1254,9 @@ class Handler(BaseHTTPRequestHandler):
             room.touch(me)
             self.connect(room, room.person(me))
             err = None
-            if body is not None:
+            if body is not None and (no := may_post(room, me, 0)):
+                err = no
+            elif body is not None:
                 said = body[:200].strip().strip("'\"")
                 word = said.split(None, 1)[0].lower() if said else ""
                 if word == "challenge":
