@@ -162,7 +162,7 @@ function pongTable(el, room) {
     const v = view, mine = v && [v.left.id, v.right.id].includes(me());
     let h = "";
     if (over) {
-      const name = (s) => (players[s].id === me() ? "You" : players[s].name);
+      const name = (s) => (players[s].id === me() ? "You" : esc(players[s].name));
       h = over.why === "points" ? `<p>${name(over.winner)} ${players[over.winner].id === me() ? "win" : "wins"}, ${Math.max(...score)}–${Math.min(...score)}.</p>`
         : over.why === "left" ? `<p>${esc(players[1 - over.winner].name)} left the table.</p>`
         : over.why === "declined" ? `<p>${esc(players[1 - side].name)} can't play right now.</p>` : `<p>The invitation was taken back.</p>`;

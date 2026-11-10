@@ -25,6 +25,7 @@ State: data/rooms/<id>/room.json (name, people, tokens) + messages.jsonl
 (append-only), all loaded into memory at start.
 """
 import json
+import math
 import os
 import http.cookies
 import re
@@ -41,6 +42,7 @@ DATA = os.environ.get("PAIR_DATA", "/data")
 APP = os.path.dirname(os.path.abspath(__file__))
 MAX_TEXT = 200_000            # one message; agents paste context
 MAX_BODY = 1_000_000
+MAX_MOVE = 16                 # a chess move as typed: "exd8=Q+", "e7e8q", "O-O-O"
 STATIC = {"door.css": "text/css", "room.css": "text/css", "pixel.js": "text/javascript", "floor.js": "text/javascript", "chessboard.js": "text/javascript", "pong.js": "text/javascript", "faces.js": "text/javascript", "auth.js": "text/javascript",
           "pixel.woff2": "font/woff2", "mono.woff2": "font/woff2", "mono-bold.woff2": "font/woff2",
           "jetbrains-mono-nerd-OFL.txt": "text/plain"}
@@ -335,6 +337,7 @@ def chess_play(room, me, what, arg=""):
     else:
         if to_move(g) != me:
             return "it is not your move"
+        arg = arg[:MAX_MOVE]
         m = game.find(arg)
         if not m:
             return f"{arg} is not a legal move here"
@@ -456,6 +459,13 @@ def pong_over(room, why, winner=None):
         room.changed()
 
 
+def num(x):
+    x = float(x)
+    if not math.isfinite(x):
+        raise ValueError("not a number")
+    return x
+
+
 def pong_act(room, me, b):
     """an invitation, an answer, leaving, or something that happened in the game; returns an error or None"""
     g = room.pong
@@ -495,14 +505,21 @@ def pong_act(room, me, b):
     k = ev.get("k")
     g["t"] = now()
     if k == "pad":
-        pong_emit(room, {"k": "pad", "from": me, "y": float(ev.get("y") or 0)})
+        try:
+            pong_emit(room, {"k": "pad", "from": me, "y": num(ev.get("y") or 0)})
+        except (TypeError, ValueError):
+            return "a paddle needs y"
     elif k in ("serve", "hit"):
         try:
-            pong_emit(room, {"k": k, "from": me, **{f: float(ev[f]) for f in ("t", "x", "y", "vx", "vy", "pad")}, "r": int(ev.get("r", -1))})
-        except (KeyError, TypeError, ValueError):
+            pong_emit(room, {"k": k, "from": me, **{f: num(ev[f]) for f in ("t", "x", "y", "vx", "vy", "pad")}, "r": int(ev.get("r", -1))})
+        except (KeyError, TypeError, ValueError, OverflowError):
             return "a serve or hit needs t, x, y, vx, vy and pad"
     elif k == "miss":
-        if int(ev.get("r", -1)) != sum(g["score"]):
+        try:
+            r = int(ev.get("r", -1))
+        except (TypeError, ValueError, OverflowError):
+            r = -1
+        if r != sum(g["score"]):
             return None                  # that rally was already counted
         g["score"][0 if other == g["left"] else 1] += 1
         sa, sb = g["score"]
@@ -680,6 +697,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", extra.pop("Cache-Control", "no-store"))
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Robots-Tag", "noindex")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -1175,7 +1194,7 @@ class Handler(BaseHTTPRequestHandler):
             self.connect(room, room.person(me))
             err = None
             if body is not None:
-                said = body.strip().strip("'\"")
+                said = body[:200].strip().strip("'\"")
                 word = said.split(None, 1)[0].lower() if said else ""
                 if word == "challenge":
                     name = said.split(None, 1)[1].strip().strip("'\"").lstrip("@") if " " in said else ""
@@ -1248,6 +1267,9 @@ class Handler(BaseHTTPRequestHandler):
                     left = deadline - now()
                     if not fresh() and not news() and left > 0:
                         room.cond.wait_for(lambda: bool(fresh()) or bool(news()), timeout=min(20, left))
+                    if room.person(me).get("revoked"):
+                        out = None
+                        break
                     got, game = fresh(), news()
                     if got or game or deadline - now() <= 0:
                         msgs = room.messages[since:]
